@@ -1,0 +1,5 @@
+[gd_scene format=3 uid="uid://bk4dq2twf0348"]
+
+[ext_resource type="PackedScene" uid="uid://chh47rgnqfyu6" path="res://models/cat.glb" id="1_myi5k"]
+
+[node name="cat" unique_id=2118665109 instance=ExtResource("1_myi5k")]

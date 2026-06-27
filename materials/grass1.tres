@@ -1,0 +1,12 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://n6acfeb6pcc8"]
+
+[ext_resource type="Texture2D" uid="uid://d0deonaw3uje8" path="res://materials/blocky.jpg" id="1_n183r"]
+
+[resource]
+albedo_color = Color(0.27, 0.62, 0.33, 1)
+metallic_specular = 0.1
+normal_scale = 0.7
+normal_texture = ExtResource("1_n183r")
+uv1_scale = Vector3(0.2, 0.2, 0.2)
+uv1_triplanar = true
+uv1_world_triplanar = true

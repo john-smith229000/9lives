@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://ca881sogensab"]
+
+[ext_resource type="Material" uid="uid://n6acfeb6pcc8" path="res://materials/grass1.tres" id="1_tj1qe"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_rc02u"]
+
+[node name="Node3D" type="Node3D" unique_id=289758931]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=707151075]
+mesh = SubResource("BoxMesh_rc02u")
+surface_material_override/0 = ExtResource("1_tj1qe")

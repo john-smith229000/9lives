@@ -1,0 +1,30 @@
+[gd_scene format=3 uid="uid://cvk3duecn2r40"]
+
+[ext_resource type="Script" uid="uid://x03uvgy7onh6" path="res://scripts/world.gd" id="1_world"]
+[ext_resource type="PackedScene" uid="uid://opda3a6ugedf" path="res://scenes/player.tscn" id="2_player"]
+[ext_resource type="Script" uid="uid://dq5y7pmy6pcj3" path="res://scripts/iso_camera.gd" id="3_camera"]
+
+[sub_resource type="Environment" id="Env_main"]
+background_mode = 1
+background_color = Color(0.45, 0.62, 0.85, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.7, 0.78, 0.85, 1)
+ambient_light_energy = 0.45
+
+[node name="World" type="Node3D" unique_id=2098847577]
+script = ExtResource("1_world")
+
+[node name="Grid" type="Node3D" parent="." unique_id=61758447]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1846897825]
+environment = SubResource("Env_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=764639923]
+shadow_enabled = true
+
+[node name="Player" parent="." unique_id=1304330895 instance=ExtResource("2_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 10)
+
+[node name="Camera" type="Camera3D" parent="." unique_id=1219225233]
+script = ExtResource("3_camera")
+target_path = NodePath("../Player")
