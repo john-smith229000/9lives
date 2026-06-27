@@ -30,9 +30,18 @@ const BIT_S := 8   # +Z
 @export var height_step: float = 0.1
 @export var terrain_seed: int = 1337
 
+@export_group("Pushable Blocks")
+## Tiles (grid x, z) that start with a pushable block on them.
+@export var block_tiles: Array[Vector2i] = [Vector2i(12, 10)]
+## Edge length of a pushable block (a bit under 1 so it reads as sitting on a tile).
+@export var block_size: float = 0.8
+
 var _heights: Array = []
 var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
+var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
+var _block_mesh: BoxMesh
+var _block_material: StandardMaterial3D
 
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
@@ -42,11 +51,13 @@ func _ready() -> void:
 	if _sun:
 		_sun.rotation_degrees = Vector3(-50.0, -55.0, 0.0)
 	_build_grid()
+	_spawn_blocks()
 	if _player:
 		_player.grid_size = grid_size
 		_player.cell_size = cell_size
 		_player.ground_y = ground_y
 		_player.height_provider = Callable(self, "get_elevation")
+		_player.block_handler = Callable(self, "can_enter")
 		_player.sync_to_grid()
 
 func _build_grid() -> void:
@@ -168,3 +179,46 @@ func get_elevation(x: int, z: int) -> float:
 	if x >= 0 and x < grid_size and z >= 0 and z < grid_size:
 		return _heights[x][z]
 	return 0.0
+
+# --- Pushable blocks ------------------------------------------------------
+
+func _spawn_blocks() -> void:
+	_block_mesh = BoxMesh.new()
+	_block_mesh.size = Vector3(block_size, block_size, block_size)
+	_block_material = StandardMaterial3D.new()
+	_block_material.albedo_color = Color(0.85, 0.5, 0.2)   # crate orange
+	_block_material.roughness = 0.9
+	for tile in block_tiles:
+		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+			continue
+		if _blocks.has(tile):
+			continue
+		var block := MeshInstance3D.new()
+		block.mesh = _block_mesh
+		block.material_override = _block_material
+		block.position = _block_world_pos(tile)
+		_grid_root.add_child(block)
+		_blocks[tile] = block
+
+func _block_world_pos(tile: Vector2i) -> Vector3:
+	# Sit the block on the tile's top surface (tile top = elevation + 0.5).
+	var surface := get_elevation(tile.x, tile.y) + 0.5
+	return Vector3(tile.x * cell_size, surface + block_size * 0.5, tile.y * cell_size)
+
+## Called by the player: can it step onto `tile` moving in `dir`?
+## Returns true (free), false (blocked), or {block, from, to} when a block is
+## being pushed — the player then slides that block in lockstep with itself.
+func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
+	if not _blocks.has(tile):
+		return true
+	var dest := tile + dir
+	# Must stay on the board and the destination must be empty.
+	if dest.x < 0 or dest.x >= grid_size or dest.y < 0 or dest.y >= grid_size:
+		return false
+	if _blocks.has(dest):
+		return false
+	# Update occupancy now; hand the slide off to the player for perfect sync.
+	var block: Node3D = _blocks[tile]
+	_blocks.erase(tile)
+	_blocks[dest] = block
+	return {"block": block, "from": block.position, "to": _block_world_pos(dest)}

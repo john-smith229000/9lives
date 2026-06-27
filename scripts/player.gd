@@ -22,12 +22,22 @@ extends CharacterBody3D
 @export var turn_time: float = 0.08
 ## Walk animation playback speed multiplier (tune so feet don't slide).
 @export var walk_anim_speed: float = 2.0
+## While pushing a block, movement and walk animation run at this fraction of normal.
+@export var push_speed_scale: float = 0.6
+## Pushed blocks tilt to the step slope, scaled a bit beyond the cat's own pitch.
+@export var block_tilt_extra: float = 1.3
 
 var _grid: Vector2i           # tile we last fully occupied
 var _target_tile: Vector2i    # tile we're currently gliding toward
 var _moving := false
 var _speed := 0.0             # current scalar speed (units/sec)
 var _facing := Vector2i.ZERO  # last direction the model was turned to
+var _seg_from: Vector3        # world pos at the start of the current segment
+var _seg_len := 0.0           # length of the current segment
+var _push: Dictionary = {}    # {block, from, to} while pushing this segment
+var _pushing := false         # true while a push is in progress (slows speed/anim)
+var _was_pushing := false     # previous frame's push state (to detect release)
+var _tilted_block: Node3D     # block currently tilted by a push, so we can level it
 var _model: Node3D
 var _anim: AnimationPlayer
 var _walk_name := ""    # seamless looping copy, played while moving
@@ -36,6 +46,9 @@ var _walking := false
 
 ## Set by World: returns a tile's elevation (meters). Lets the cat ride terrain.
 var height_provider: Callable
+## Set by World: called as can_enter(tile, dir) -> bool. Returns false if a block
+## is in the way and can't be pushed; pushes the block if it can.
+var block_handler: Callable
 
 func _ready() -> void:
 	_model = $Model
@@ -155,6 +168,44 @@ func _process(delta: float) -> void:
 	if _moving:
 		_advance(delta, dir)
 	_set_walking(_moving)
+	_update_anim_speed()
+
+func _update_anim_speed() -> void:
+	_pushing = _moving and not _push.is_empty()
+	# When a push ends, level the block back out.
+	if _was_pushing and not _pushing:
+		_level_block()
+	_was_pushing = _pushing
+	if _anim:
+		var want := walk_anim_speed * (push_speed_scale if _pushing else 1.0)
+		if not is_equal_approx(_anim.speed_scale, want):
+			_anim.speed_scale = want
+
+## Tilt the pushed block to match the upcoming step's slope (a touch past the
+## cat's own pitch for a heavier feel).
+func _tilt_block(dir: Vector2i) -> void:
+	if _push.is_empty():
+		return
+	var block: Node3D = _push["block"]
+	_tilted_block = block
+	var de := (_push["to"] as Vector3).y - (_push["from"] as Vector3).y
+	var pitch := atan2(de, cell_size) * block_tilt_extra
+	# Tilt about the axis perpendicular to travel so the leading edge follows the slope.
+	var rot := Vector3.ZERO
+	if dir.x != 0:
+		rot.z = dir.x * pitch
+	else:
+		rot.x = -dir.y * pitch
+	var t := create_tween()
+	t.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	t.tween_property(block, "rotation", rot, turn_time)
+
+func _level_block() -> void:
+	if _tilted_block:
+		var t := create_tween()
+		t.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		t.tween_property(_tilted_block, "rotation", Vector3.ZERO, turn_time)
+		_tilted_block = null
 
 func _set_walking(walking: bool) -> void:
 	if _anim == null or _walk_name == "" or walking == _walking:
@@ -181,26 +232,41 @@ func _read_dir() -> Vector2i:
 		return Vector2i(1, 0)
 	return Vector2i.ZERO
 
-func _begin_segment(dir: Vector2i) -> void:
+func _begin_segment(dir: Vector2i) -> bool:
+	_push = {}
 	var t := _grid + dir
 	if not _in_bounds(t):
-		return            # wall ahead: don't start a step
+		return false           # edge of board: don't move
+	# Ask World whether the tile is enterable. Returns: false = blocked,
+	# true = free, or {block, from, to} when a block is being pushed.
+	if block_handler.is_valid():
+		var res: Variant = block_handler.call(t, dir)
+		if res is Dictionary:
+			_push = res        # we'll drive this block in lockstep
+		elif res is bool and not res:
+			return false       # unpushable block in the way
+	_seg_from = global_position
 	_target_tile = t
+	_seg_len = _seg_from.distance_to(_tile_to_world(t))
 	_moving = true
 	_orient(dir, _elevation(t) - _elevation(_grid))
+	_tilt_block(dir)   # tilt the pushed block (if any) to the step slope
+	return true
 
 func _advance(delta: float, dir: Vector2i) -> void:
 	var target_world := _tile_to_world(_target_tile)
 	var remaining := global_position.distance_to(target_world)
+	# Pushing a block slows everything down.
+	var top_speed := move_speed * (push_speed_scale if not _push.is_empty() else 1.0)
 	# Keep gliding past this tile (no stop) only if a key is held AND the next
 	# tile in that direction is on the board.
 	var chain := dir != Vector2i.ZERO and _in_bounds(_target_tile + dir)
 	var desired_speed: float
 	if chain:
-		desired_speed = move_speed
+		desired_speed = top_speed
 	else:
 		# Cap speed so we coast to ~0 right at the target tile (ease-out).
-		desired_speed = minf(move_speed, sqrt(2.0 * acceleration * maxf(remaining, 0.0)))
+		desired_speed = minf(top_speed, sqrt(2.0 * acceleration * maxf(remaining, 0.0)))
 	_speed = move_toward(_speed, desired_speed, acceleration * delta)
 
 	var step := _speed * delta
@@ -208,15 +274,24 @@ func _advance(delta: float, dir: Vector2i) -> void:
 		var leftover := step - remaining
 		_grid = _target_tile
 		global_position = target_world
-		if chain:
-			_begin_segment(dir)
-			if _moving and leftover > 0.0:
+		_drive_block(1.0)          # snap pushed block to its destination
+		if chain and _begin_segment(dir):
+			if leftover > 0.0:
 				global_position = global_position.move_toward(_tile_to_world(_target_tile), leftover)
 		else:
 			_moving = false
 			_speed = 0.0
 	else:
 		global_position = global_position.move_toward(target_world, step)
+		var prog := 1.0 - global_position.distance_to(target_world) / _seg_len if _seg_len > 0.0 else 1.0
+		_drive_block(clampf(prog, 0.0, 1.0))
+
+## Slide the block being pushed in lockstep with the player's progress (0..1).
+func _drive_block(progress: float) -> void:
+	if _push.is_empty():
+		return
+	var block: Node3D = _push["block"]
+	block.position = (_push["from"] as Vector3).lerp(_push["to"] as Vector3, progress)
 
 func _orient(dir: Vector2i, delta_e: float) -> void:
 	if _model == null or dir == Vector2i.ZERO:
