@@ -383,7 +383,10 @@ func _drive_block(progress: float) -> void:
 	if _push.is_empty():
 		return
 	var block: Node3D = _push["block"]
-	block.position = (_push["from"] as Vector3).lerp(_push["to"] as Vector3, progress)
+	# Drive only X/Z; World sets the crate's Y so it rides the surface/goal pad.
+	var p := (_push["from"] as Vector3).lerp(_push["to"] as Vector3, progress)
+	block.position.x = p.x
+	block.position.z = p.z
 
 func _orient(dir: Vector2i, delta_e: float) -> void:
 	if _model == null or dir == Vector2i.ZERO:

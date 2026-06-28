@@ -20,6 +20,7 @@ height_gradient = 0.0
 noise_amplitude = 0.0
 height_step = 0.0
 block_tiles = Array[Vector2i]([])
+ball_tiles = Array[Vector2i]([])
 
 [node name="Grid" type="Node3D" parent="."]
 

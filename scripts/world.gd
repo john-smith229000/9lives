@@ -34,6 +34,17 @@ const BIT_S := 8   # +Z
 ## Tiles (grid x, z) that start with a pushable block on them.
 @export var block_tiles: Array[Vector2i] = [Vector2i(12, 10)]
 
+@export_group("Rolling Balls")
+## Tiles (grid x, z) that start with a rollable ball on them.
+@export var ball_tiles: Array[Vector2i] = [Vector2i(7, 10)]
+## Speed (m/s) a ball gets when the cat shoves it.
+@export var ball_launch_speed: float = 4.5
+## Energy cost per tile on flat ground — lower = rolls farther.
+@export var ball_friction: float = 2.5
+## How much each tile of elevation change adds/removes from the roll distance
+## (uphill shortens it, downhill lengthens it).
+@export var ball_slope_accel: float = 12.0
+
 var _heights: Array = []
 var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
@@ -41,6 +52,23 @@ var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
 var _block_starts: Array = []   # [{block, tile}] for restart
 var _block_bottom := -0.375     # crate's lowest point relative to its origin
 var _crate_scene: PackedScene
+
+# --- Goal ---
+var _goal_tile := Vector2i(-1, -1)
+var _goal_node: Node3D
+var _goal_scene: PackedScene
+var _goal_triggered_scene: PackedScene
+var _goal_bottom := 0.0
+var _goal_tri_bottom := 0.0
+var _goal_h_untriggered := 0.2  # pad height when not triggered
+var _goal_h_triggered := 0.1    # pad height when smushed
+var _goal_pad_extra := 0.0      # current pad height added to the goal tile
+var won := false                # true once the crate is sitting on the goal
+
+# --- Balls ---
+var _ball_scene: PackedScene
+var _balls: Array = []          # [{node, dir, speed, resting, tile, start}]
+var _ball_radius := 0.375
 
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
@@ -51,6 +79,8 @@ func _ready() -> void:
 		_sun.rotation_degrees = Vector3(-50.0, -55.0, 0.0)
 	_build_grid()
 	_spawn_blocks()
+	_spawn_goal()
+	_spawn_balls()
 	if _player:
 		_player.grid_size = grid_size
 		_player.cell_size = cell_size
@@ -174,9 +204,13 @@ func _elevation_for(x: int, z: int) -> float:
 	return ev
 
 ## Elevation (meters) of a tile's top surface above the base. Used by the player.
+## Includes the goal pad's current height so the cat / crate stand on top of it.
 func get_elevation(x: int, z: int) -> float:
 	if x >= 0 and x < grid_size and z >= 0 and z < grid_size:
-		return _heights[x][z]
+		var e: float = _heights[x][z]
+		if x == _goal_tile.x and z == _goal_tile.y:
+			e += _goal_pad_extra
+		return e
 	return 0.0
 
 # --- Pushable blocks ------------------------------------------------------
@@ -242,6 +276,19 @@ func reset_blocks() -> void:
 		block.position = _block_world_pos(tile)
 		block.rotation = Vector3.ZERO
 		_blocks[tile] = block
+	# Reset the goal back to its un-triggered tile.
+	if won:
+		won = false
+		_place_goal(false)
+	# Reset balls to their start tiles, stationary.
+	for ball in _balls:
+		ball["resting"] = true
+		ball["speed"] = 0.0
+		ball["dir"] = Vector2i.ZERO
+		ball["tile"] = ball["start"]
+		var node: Node3D = ball["node"]
+		node.position = _ball_world_pos(ball["start"])
+		node.rotation = Vector3.ZERO
 
 func _block_world_pos(tile: Vector2i) -> Vector3:
 	# Rest the crate's bottom on the tile's top surface (tile top = elevation + 0.5).
@@ -252,16 +299,252 @@ func _block_world_pos(tile: Vector2i) -> Vector3:
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
 ## being pushed — the player then slides that block in lockstep with itself.
 func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
+	# A ball: shove it rolling and step into the tile it vacates. If it can't move
+	# (obstacle right behind it), the cat is blocked too.
+	var ball := _resting_ball_at(tile)
+	if not ball.is_empty():
+		return _launch_ball(ball, dir)
 	if not _blocks.has(tile):
 		return true
 	var dest := tile + dir
 	# Must stay on the board and the destination must be empty.
 	if dest.x < 0 or dest.x >= grid_size or dest.y < 0 or dest.y >= grid_size:
 		return false
-	if _blocks.has(dest):
+	if _blocks.has(dest) or not _resting_ball_at(dest).is_empty():
 		return false
 	# Update occupancy now; hand the slide off to the player for perfect sync.
 	var block: Node3D = _blocks[tile]
 	_blocks.erase(tile)
 	_blocks[dest] = block
 	return {"block": block, "from": block.position, "to": _block_world_pos(dest)}
+
+# --- Goal ----------------------------------------------------------------
+
+func _spawn_goal() -> void:
+	if block_tiles.is_empty():
+		return                      # only meaningful where there's a crate to push
+	_goal_scene = load("res://models/goal_tile.glb")
+	_goal_triggered_scene = load("res://models/goal_tile_triggered.glb")
+	if _goal_scene == null or _goal_triggered_scene == null:
+		push_warning("World: goal tile glb(s) missing.")
+		return
+	var a0 := _measure_aabb_y(_goal_scene)            # untriggered (min_y, max_y)
+	var a1 := _measure_aabb_y(_goal_triggered_scene)  # triggered
+	_goal_bottom = a0.x
+	_goal_tri_bottom = a1.x
+	_goal_h_untriggered = a0.y - a0.x
+	_goal_h_triggered = a1.y - a1.x
+	_goal_tile = _pick_goal_tile()
+	_place_goal(false)
+
+## A random tile that isn't the player's or a crate's start tile.
+func _pick_goal_tile() -> Vector2i:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = terrain_seed + 7
+	var player_tile := Vector2i(10, 10)
+	if _player:
+		player_tile = Vector2i(roundi(_player.global_position.x / cell_size), roundi(_player.global_position.z / cell_size))
+	for _i in 100:
+		var t := Vector2i(rng.randi_range(0, grid_size - 1), rng.randi_range(0, grid_size - 1))
+		if t == player_tile or t in block_tiles:
+			continue
+		return t
+	return Vector2i(0, 0)
+
+func _place_goal(triggered: bool) -> void:
+	if _goal_node:
+		_goal_node.queue_free()
+	var scene := _goal_triggered_scene if triggered else _goal_scene
+	_goal_node = scene.instantiate()
+	# Use the RAW terrain height (not get_elevation, which adds the pad) so the
+	# pad always rests on the ground instead of floating on its own height.
+	var surface := float(_heights[_goal_tile.x][_goal_tile.y]) + 0.5
+	var bottom := _goal_tri_bottom if triggered else _goal_bottom
+	_goal_node.position = Vector3(_goal_tile.x * cell_size, surface - bottom, _goal_tile.y * cell_size)
+	_grid_root.add_child(_goal_node)
+	# Things standing on the goal tile ride on top of the pad at its current height.
+	_goal_pad_extra = _goal_h_triggered if triggered else _goal_h_untriggered
+
+func _process(delta: float) -> void:
+	_update_goal()
+	_update_crate_heights(delta)
+	_update_balls(delta)
+
+## Keep each crate sitting on whatever surface is under it (ground, or the goal
+## pad at its current height), easing the Y so it rides the pad / smush smoothly.
+## The player drives crate X/Z while pushing; World owns the Y.
+func _update_crate_heights(delta: float) -> void:
+	for tile in _blocks:
+		var b: Node3D = _blocks[tile]
+		var tx := roundi(b.position.x / cell_size)
+		var tz := roundi(b.position.z / cell_size)
+		var target_y := (get_elevation(tx, tz) + 0.5) - _block_bottom
+		b.position.y = lerpf(b.position.y, target_y, 1.0 - exp(-15.0 * delta))
+
+## Toggle the goal based on how much a crate actually covers it. Triggers once a
+## crate covers ~40% of the tile and releases when it slides back off (hysteresis
+## prevents flicker right at the threshold).
+func _update_goal() -> void:
+	if _goal_tile.x < 0 or _goal_node == null:
+		return
+	var gx := _goal_tile.x * cell_size
+	var gz := _goal_tile.y * cell_size
+	var best_cover := 0.0
+	for tile in _blocks:
+		var b: Node3D = _blocks[tile]
+		var d := Vector2(b.position.x - gx, b.position.z - gz).length()
+		best_cover = maxf(best_cover, clampf(1.0 - d / cell_size, 0.0, 1.0))
+	if not won and best_cover >= 0.4:
+		won = true
+		_place_goal(true)
+	elif won and best_cover < 0.3:
+		won = false
+		_place_goal(false)
+
+# --- Rolling balls -------------------------------------------------------
+
+func _spawn_balls() -> void:
+	if ball_tiles.is_empty():
+		return
+	_ball_scene = load("res://models/ball.glb")
+	if _ball_scene == null:
+		push_warning("World: could not load ball.glb")
+		return
+	var ab := _measure_aabb_y(_ball_scene)
+	_ball_radius = (ab.y - ab.x) * 0.5
+	for tile in ball_tiles:
+		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+			continue
+		var node := _ball_scene.instantiate() as Node3D
+		node.position = _ball_world_pos(tile)
+		_grid_root.add_child(node)
+		_balls.append({
+			"node": node, "dir": Vector2i.ZERO, "speed": 0.0,
+			"resting": true, "tile": tile, "start": tile,
+		})
+
+func _ball_world_pos(tile: Vector2i) -> Vector3:
+	return Vector3(tile.x * cell_size, get_elevation(tile.x, tile.y) + 0.5 + _ball_radius, tile.y * cell_size)
+
+func _resting_ball_at(tile: Vector2i) -> Dictionary:
+	for ball in _balls:
+		if ball["resting"] and ball["tile"] == tile:
+			return ball
+	return {}
+
+func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
+	var node: Node3D = ball["node"]
+	var cur := Vector2i(roundi(node.position.x / cell_size), roundi(node.position.z / cell_size))
+	if _ball_blocked(cur + dir, ball):
+		return false                       # obstacle right behind it — can't shove
+
+	# Walk the elevation map in `dir`, spending kinetic energy per tile. Uphill
+	# tiles cost more, downhill less, so the ball travels a whole number of tiles
+	# that depends on the shove and the terrain. Round at the end.
+	var ke := 0.5 * ball_launch_speed * ball_launch_speed
+	var tile := cur
+	var tiles := 0
+	while not _ball_blocked(tile + dir, ball) and tiles < grid_size * 2:
+		var nxt := tile + dir
+		var de := _base_elev(nxt) - _base_elev(tile)
+		var cost := ball_friction * cell_size + ball_slope_accel * de
+		if cost <= 0.0:
+			ke -= cost                     # downhill: gains energy, keeps rolling
+			tile = nxt
+			tiles += 1
+		elif ke >= cost:
+			ke -= cost
+			tile = nxt
+			tiles += 1
+		else:
+			if ke / cost >= 0.5:           # reaches past the midpoint: round up
+				tiles += 1
+			break
+	if tiles < 1:
+		tiles = 1                          # cur+dir is free, so at least one tile
+
+	var dist := float(tiles) * cell_size
+	ball["dir"] = dir
+	ball["resting"] = false
+	ball["target"] = Vector2((cur.x + dir.x * tiles) * cell_size, (cur.y + dir.y * tiles) * cell_size)
+	# Deceleration that stops exactly at the target center, starting at launch speed.
+	ball["decel"] = (ball_launch_speed * ball_launch_speed) / (2.0 * dist)
+	return true
+
+func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:
+	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+		return true
+	if _blocks.has(tile):
+		return true
+	for b in _balls:
+		if b != self_ball and b["resting"] and b["tile"] == tile:
+			return true
+	return false
+
+func _base_elev(tile: Vector2i) -> float:
+	if tile.x >= 0 and tile.x < grid_size and tile.y >= 0 and tile.y < grid_size:
+		return float(_heights[tile.x][tile.y])
+	return 0.0
+
+func _update_balls(delta: float) -> void:
+	for ball in _balls:
+		if not ball["resting"]:
+			_roll_ball(ball, delta)
+		_update_ball_height(ball, delta)
+
+func _roll_ball(ball: Dictionary, delta: float) -> void:
+	var node: Node3D = ball["node"]
+	var d: Vector2i = ball["dir"]
+	var target: Vector2 = ball["target"]
+	var rem := (target - Vector2(node.position.x, node.position.z)).length()
+	if rem <= 0.005:
+		node.position.x = target.x
+		node.position.z = target.y
+		_rest_ball(ball)
+		return
+	# Constant deceleration toward the precomputed target: v = sqrt(2*a*remaining)
+	# gives a smooth slow-down that reaches exactly 0 at the tile centre.
+	var v: float = sqrt(2.0 * ball["decel"] * rem)
+	var move := minf(v * delta, rem)
+	node.position.x += d.x * move
+	node.position.z += d.y * move
+	_spin(node, d, move)
+	if rem - move <= 0.005:
+		node.position.x = target.x
+		node.position.z = target.y
+		_rest_ball(ball)
+
+func _spin(node: Node3D, d: Vector2i, dist: float) -> void:
+	var axis := Vector3(d.y, 0.0, -d.x)
+	if axis.length() > 0.0:
+		node.rotate(axis.normalized(), dist / _ball_radius)
+
+func _rest_ball(ball: Dictionary) -> void:
+	ball["resting"] = true
+	ball["speed"] = 0.0
+	ball["dir"] = Vector2i.ZERO
+	var node: Node3D = ball["node"]
+	ball["tile"] = Vector2i(roundi(node.position.x / cell_size), roundi(node.position.z / cell_size))
+
+func _update_ball_height(ball: Dictionary, delta: float) -> void:
+	var node: Node3D = ball["node"]
+	var tx := roundi(node.position.x / cell_size)
+	var tz := roundi(node.position.z / cell_size)
+	var target_y := get_elevation(tx, tz) + 0.5 + _ball_radius
+	node.position.y = lerpf(node.position.y, target_y, 1.0 - exp(-15.0 * delta))
+
+## Min and max Y of a single-node glb relative to its origin (bottom & top).
+func _measure_aabb_y(scene: PackedScene) -> Vector2:
+	var inst := scene.instantiate()
+	add_child(inst)
+	var min_y := INF
+	var max_y := -INF
+	for mi in _all_mesh_instances(inst):
+		var m := mi as MeshInstance3D
+		var box: AABB = m.global_transform * m.get_aabb()
+		min_y = minf(min_y, box.position.y)
+		max_y = maxf(max_y, box.position.y + box.size.y)
+	inst.queue_free()
+	if is_inf(min_y):
+		return Vector2(0.0, 0.2)
+	return Vector2(min_y - global_position.y, max_y - global_position.y)
