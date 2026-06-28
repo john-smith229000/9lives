@@ -299,9 +299,9 @@ func _block_world_pos(tile: Vector2i) -> Vector3:
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
 ## being pushed — the player then slides that block in lockstep with itself.
 func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
-	# A ball: shove it rolling and step into the tile it vacates. If it can't move
-	# (obstacle right behind it), the cat is blocked too.
-	var ball := _resting_ball_at(tile)
+	# A ball (rolling or resting): (re)shove it and step into the tile it vacates.
+	# If it can't move (obstacle right behind it), the cat is blocked too.
+	var ball := _ball_at(tile)
 	if not ball.is_empty():
 		return _launch_ball(ball, dir)
 	if not _blocks.has(tile):
@@ -310,7 +310,7 @@ func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 	# Must stay on the board and the destination must be empty.
 	if dest.x < 0 or dest.x >= grid_size or dest.y < 0 or dest.y >= grid_size:
 		return false
-	if _blocks.has(dest) or not _resting_ball_at(dest).is_empty():
+	if _blocks.has(dest) or not _ball_at(dest).is_empty():
 		return false
 	# Update occupancy now; hand the slide off to the player for perfect sync.
 	var block: Node3D = _blocks[tile]
@@ -426,11 +426,18 @@ func _spawn_balls() -> void:
 func _ball_world_pos(tile: Vector2i) -> Vector3:
 	return Vector3(tile.x * cell_size, get_elevation(tile.x, tile.y) + 0.5 + _ball_radius, tile.y * cell_size)
 
-func _resting_ball_at(tile: Vector2i) -> Dictionary:
+## Any ball (rolling or resting) currently over this tile.
+func _ball_at(tile: Vector2i) -> Dictionary:
 	for ball in _balls:
-		if ball["resting"] and ball["tile"] == tile:
+		var n: Node3D = ball["node"]
+		if Vector2i(roundi(n.position.x / cell_size), roundi(n.position.z / cell_size)) == tile:
 			return ball
 	return {}
+
+func _player_tile() -> Vector2i:
+	if _player == null:
+		return Vector2i(-9999, -9999)
+	return Vector2i(roundi(_player.global_position.x / cell_size), roundi(_player.global_position.z / cell_size))
 
 func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
 	var node: Node3D = ball["node"]
@@ -476,6 +483,8 @@ func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:
 		return true
 	if _blocks.has(tile):
 		return true
+	if tile == _player_tile():
+		return true                     # don't roll through the cat
 	for b in _balls:
 		if b != self_ball and b["resting"] and b["tile"] == tile:
 			return true
@@ -506,6 +515,15 @@ func _roll_ball(ball: Dictionary, delta: float) -> void:
 	# gives a smooth slow-down that reaches exactly 0 at the tile centre.
 	var v: float = sqrt(2.0 * ball["decel"] * rem)
 	var move := minf(v * delta, rem)
+	# Stop centred on the last free tile if something (the cat, a crate) is now in
+	# the way — so a rolling ball can't pass through the player.
+	var cur_tile := Vector2i(roundi(node.position.x / cell_size), roundi(node.position.z / cell_size))
+	var next_tile := Vector2i(roundi((node.position.x + d.x * move) / cell_size), roundi((node.position.z + d.y * move) / cell_size))
+	if next_tile != cur_tile and _ball_blocked(next_tile, ball):
+		node.position.x = cur_tile.x * cell_size
+		node.position.z = cur_tile.y * cell_size
+		_rest_ball(ball)
+		return
 	node.position.x += d.x * move
 	node.position.z += d.y * move
 	_spin(node, d, move)
