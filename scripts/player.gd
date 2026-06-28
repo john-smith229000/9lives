@@ -51,6 +51,9 @@ var _walk_name := ""    # seamless looping copy, played while moving
 var _rest_name := ""    # original clip; frame 0 is the rest pose for idle
 var _walking := false
 
+# --- Click-to-move path ---
+var _path: Array = []         # queued tiles to walk to (cardinal-adjacent steps)
+
 # --- Free (interior) mode ---
 const FREE_GRAVITY := 20.0
 var _free_mode := false       # true while moving freely (interior, physics-based)
@@ -204,13 +207,49 @@ func _process(delta: float) -> void:
 		_free_move(delta)
 		_update_anim_speed()
 		return
-	var dir := _read_dir()
+	# Manual input cancels any click-to-move path.
+	if _read_dir() != Vector2i.ZERO:
+		_path.clear()
+	var dir := _auto_dir()
 	if not _moving and dir != Vector2i.ZERO:
-		_begin_segment(dir)
+		if not _begin_segment(dir):
+			_path.clear()        # path blocked — abandon it
 	if _moving:
 		_advance(delta, dir)
 	_set_walking(_moving)
 	_update_anim_speed()
+
+## The tile to plan a path from: where we're heading if moving, else current.
+func nav_tile() -> Vector2i:
+	return _target_tile if _moving else _grid
+
+## Follow this list of tiles (each step cardinal-adjacent). Manual input cancels.
+func set_path(path: Array) -> void:
+	_path = path.duplicate()
+
+## Current desired direction: manual key, else toward the next path tile.
+func _auto_dir() -> Vector2i:
+	var manual := _read_dir()
+	if manual != Vector2i.ZERO:
+		return manual
+	while not _path.is_empty() and _path[0] == _grid:
+		_path.remove_at(0)
+	if _path.is_empty():
+		return Vector2i.ZERO
+	return _step_dir(_grid, _path[0])
+
+func _step_dir(a: Vector2i, b: Vector2i) -> Vector2i:
+	return Vector2i(signi(b.x - a.x), signi(b.y - a.y))
+
+## Direction of the step that would follow the current target tile (for deciding
+## whether to keep speed up). ZERO if nothing follows (ease to a stop).
+func _lookahead_dir() -> Vector2i:
+	var manual := _read_dir()
+	if manual != Vector2i.ZERO:
+		return manual          # held key continues in the same direction
+	if _path.size() >= 2:      # _path[0] is the current target, _path[1] is next
+		return _step_dir(_path[0], _path[1])
+	return Vector2i.ZERO
 
 # --- Free (interior) mode ---------------------------------------------------
 
@@ -241,9 +280,9 @@ func _free_move(delta: float) -> void:
 
 	var dir := Vector3.ZERO
 	if _free_cam:
-		var basis := _free_cam.global_transform.basis
-		var fwd := -basis.z; fwd.y = 0.0
-		var right := basis.x; right.y = 0.0
+		var cam_basis := _free_cam.global_transform.basis
+		var fwd := -cam_basis.z; fwd.y = 0.0
+		var right := cam_basis.x; right.y = 0.0
 		dir = fwd.normalized() * fwd_amt + right.normalized() * side_amt
 	dir.y = 0.0
 	var moving := dir.length() > 0.01
@@ -360,14 +399,15 @@ func _begin_segment(dir: Vector2i) -> bool:
 	_tilt_block(dir)   # tilt the pushed block (if any) to the step slope
 	return true
 
-func _advance(delta: float, dir: Vector2i) -> void:
+func _advance(delta: float, _dir: Vector2i) -> void:
 	var target_world := _tile_to_world(_target_tile)
 	var remaining := global_position.distance_to(target_world)
 	# Pushing a block slows everything down.
 	var top_speed := move_speed * (push_speed_scale if not _push.is_empty() else 1.0)
-	# Keep gliding past this tile (no stop) only if a key is held AND the next
-	# tile in that direction is on the board.
-	var chain := dir != Vector2i.ZERO and _in_bounds(_target_tile + dir)
+	# Keep gliding past this tile (no stop) only if there's a valid next step
+	# (held key continuing, or another path tile). Otherwise ease to a stop.
+	var look := _lookahead_dir()
+	var chain := look != Vector2i.ZERO and _in_bounds(_target_tile + look)
 	var desired_speed: float
 	if chain:
 		desired_speed = top_speed
@@ -382,7 +422,9 @@ func _advance(delta: float, dir: Vector2i) -> void:
 		_grid = _target_tile
 		global_position = target_world
 		_drive_block(1.0)          # snap pushed block to its destination
-		if chain and _begin_segment(dir):
+		# Re-aim from the (now updated) tile — handles path corners and key changes.
+		var nd := _auto_dir()
+		if chain and nd != Vector2i.ZERO and _begin_segment(nd):
 			if leftover > 0.0:
 				global_position = global_position.move_toward(_tile_to_world(_target_tile), leftover)
 		else:

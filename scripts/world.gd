@@ -78,6 +78,10 @@ var _ball_radius := 0.375
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
 @onready var _sun: DirectionalLight3D = $Sun
+@onready var _camera: Camera3D = get_node_or_null("Camera")
+
+var _obstacle: Dictionary = {}   # cached map-feature blocked tiles (lazy)
+var _obstacle_built := false
 
 func _ready() -> void:
 	if _sun:
@@ -95,6 +99,7 @@ func _ready() -> void:
 		_player.block_handler = Callable(self, "can_enter")
 		_player.sync_to_grid()
 		_player_start = _player.global_position
+	_setup_click_catcher()
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -265,6 +270,7 @@ func _make_crate() -> Node3D:
 	var crate := src.find_child("crate", true, false)
 	if crate:
 		crate.get_parent().remove_child(crate)
+		crate.owner = null            # avoid the reparent/owner-inconsistency warning
 		holder.add_child(crate)
 	else:
 		push_warning("World: no 'crate' node inside crate.glb")
@@ -320,6 +326,157 @@ func _block_world_pos(tile: Vector2i) -> Vector3:
 	# Rest the crate's bottom on the tile's top surface (tile top = elevation + 0.5).
 	var surface := get_elevation(tile.x, tile.y) + 0.5
 	return Vector3(tile.x * cell_size, surface - _block_bottom, tile.y * cell_size)
+
+# --- Click to move -------------------------------------------------------
+
+# A full-screen Control captures clicks: its local mouse position and size are
+# in the same coordinate space, sidestepping the project_ray stretch bug.
+func _setup_click_catcher() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = -1                       # below the pause menu
+	add_child(layer)
+	var catcher := Control.new()
+	catcher.set_anchors_preset(Control.PRESET_FULL_RECT)
+	catcher.mouse_filter = Control.MOUSE_FILTER_PASS
+	layer.add_child(catcher)
+	catcher.gui_input.connect(_on_click.bind(catcher))
+
+func _on_click(event: InputEvent, catcher: Control) -> void:
+	if _camera == null or _player == null:
+		return
+	if _player.has_method("is_in_free_mode") and _player.is_in_free_mode():
+		return                               # interior uses free WASD, not click
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	var tile := _click_to_tile(event.position, catcher.size)
+	if tile.x < 0:
+		return
+	var start: Vector2i = _player.nav_tile() if _player.has_method("nav_tile") else _player_tile()
+	if not _player.has_method("set_path"):
+		return
+
+	# Push/interact gesture: if the cat is right next to a crate/ball and you
+	# click straight past it (same row or column, that direction), walk straight
+	# INTO it to push/shove rather than pathfinding around.
+	var delta := tile - start
+	if delta != Vector2i.ZERO and (delta.x == 0 or delta.y == 0):
+		var dir := Vector2i(signi(delta.x), signi(delta.y))
+		if _is_pushable_tile(start + dir):
+			_player.set_path(_straight_line(start, dir, tile))
+			return
+
+	# Otherwise pathfind around obstacles.
+	var path := find_path(start, tile)
+	if not path.is_empty():
+		_player.set_path(path)
+
+func _is_pushable_tile(tile: Vector2i) -> bool:
+	return _blocks.has(tile) or not _ball_at(tile).is_empty()
+
+## Straight cardinal line of tiles from start (exclusive) toward target, used for
+## push gestures so the path runs through the object instead of around it.
+func _straight_line(start: Vector2i, dir: Vector2i, target: Vector2i) -> Array:
+	var path: Array = []
+	var c := start
+	while c != target:
+		c += dir
+		if c.x < 0 or c.x >= grid_size or c.y < 0 or c.y >= grid_size:
+			break
+		path.append(c)
+	return path
+
+## Unproject a click (Control-local pos within `screen_size`) and return the tile
+## it lands on. Manual ortho unprojection (immune to the project_ray stretch bug)
+## plus a height-field raymarch so it's correct over elevated terrain too.
+func _click_to_tile(local_pos: Vector2, screen_size: Vector2) -> Vector2i:
+	if screen_size.x <= 0.0 or screen_size.y <= 0.0:
+		return Vector2i(-1, -1)
+	var ndc := Vector2(local_pos.x / screen_size.x, local_pos.y / screen_size.y) * 2.0 - Vector2.ONE
+	var cam := _camera.global_transform
+	var half_h := _camera.size * 0.5
+	var half_w := half_h * (screen_size.x / screen_size.y)
+	var origin := cam.origin + cam.basis.x * (ndc.x * half_w) + cam.basis.y * (-ndc.y * half_h)
+	var fwd := -cam.basis.z
+	if absf(fwd.y) < 0.00001:
+		return Vector2i(-1, -1)
+	# March the ray down through the terrain; stop at the first tile whose top
+	# surface (elevation + 0.5) the ray drops to or below.
+	var step := 0.15
+	var p := origin
+	for _i in 1200:
+		p += fwd * step
+		var tx := roundi(p.x / cell_size)
+		var tz := roundi(p.z / cell_size)
+		if tx >= 0 and tx < grid_size and tz >= 0 and tz < grid_size:
+			if p.y <= get_elevation(tx, tz) + 0.5:
+				return Vector2i(tx, tz)
+		if p.y < -5.0:
+			break
+	return Vector2i(-1, -1)
+
+## BFS over walkable tiles. Returns the list of tiles from the first step to the
+## goal (cardinal-adjacent), or [] if unreachable.
+func find_path(start: Vector2i, goal: Vector2i) -> Array:
+	if start == goal:
+		return []
+	_ensure_obstacles()
+	if not _path_walkable(goal):
+		return []
+	var came := {start: start}
+	var queue: Array[Vector2i] = [start]
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var found := false
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_front()
+		if cur == goal:
+			found = true
+			break
+		for d in dirs:
+			var n: Vector2i = cur + d
+			if came.has(n) or not _path_walkable(n):
+				continue
+			came[n] = cur
+			queue.append(n)
+	if not found:
+		return []
+	var path: Array = []
+	var c := goal
+	while c != start:
+		path.push_front(c)
+		c = came[c]
+	return path
+
+func _path_walkable(tile: Vector2i) -> bool:
+	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+		return false
+	if _blocks.has(tile):
+		return false
+	for ball in _balls:
+		if ball["resting"] and ball["tile"] == tile:
+			return false
+	return not _obstacle.has(tile)
+
+## Cache which tiles are blocked by the custom map's geometry (Scene 3), once.
+func _ensure_obstacles() -> void:
+	if _obstacle_built:
+		return
+	if map_path == NodePath(""):
+		_obstacle_built = true
+		return
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return                                # try again on the next click
+	_obstacle_built = true
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.6, 0.6, 0.6)
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = shape
+	params.exclude = [_player.get_rid()]      # ignore the cat itself
+	for x in grid_size:
+		for z in grid_size:
+			params.transform = Transform3D(Basis(), Vector3(x * cell_size, ground_y, z * cell_size))
+			if not space.intersect_shape(params, 1).is_empty():
+				_obstacle[Vector2i(x, z)] = true
 
 ## Called by the player: can it step onto `tile` moving in `dir`?
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
