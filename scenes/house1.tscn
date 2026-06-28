@@ -1,0 +1,63 @@
+[gd_scene format=3 uid="uid://c5ggdhh5h3xxq"]
+
+[ext_resource type="PackedScene" uid="uid://bc4kx3fjof1eo" path="res://models/house1.glb" id="1_lubih"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_gttws"]
+size = Vector3(2.1352615, 1.9658203, 0.13430178)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_lubih"]
+size = Vector3(0.26934552, 1.9605713, 3.8132324)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_forep"]
+size = Vector3(4.1497498, 2.0453796, 0.1640625)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_tdora"]
+size = Vector3(1, 1.2733154, 0.7441406)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_t1nu3"]
+size = Vector3(1.1661377, 1.9743652, 0.140625)
+
+[node name="Node3D" type="Node3D" unique_id=158138801]
+
+[node name="house12" parent="." unique_id=1898884346 instance=ExtResource("1_lubih")]
+
+[node name="inside_house" type="StaticBody3D" parent="." unique_id=2111415343]
+
+[node name="inside_house_collision" type="CollisionShape3D" parent="inside_house" unique_id=1041137863]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.37852335, 1.2465888, 1.967109)
+visible = false
+shape = SubResource("BoxShape3D_gttws")
+
+[node name="inside_view" type="Camera3D" parent="." unique_id=1380877905]
+transform = Transform3D(1, 0, 0, 0, 0.7727446, 0.6347171, 0, -0.6347171, 0.7727446, -0.16879869, 2.0576634, 1.8075428)
+fov = 80.0
+
+[node name="SpotLight3D" type="SpotLight3D" parent="." unique_id=1945605072]
+transform = Transform3D(1, 0, 0, 0, 0.0038048346, 0.99999285, 0, -0.99999285, 0.0038048346, 0, 2.755626, 0.017407656)
+light_size = 3.0
+light_specular = 0.1
+shadow_enabled = true
+spot_range = 4.0
+spot_angle = 72.24
+
+[node name="house_collisions" type="StaticBody3D" parent="." unique_id=2101937361]
+
+[node name="wall" type="CollisionShape3D" parent="house_collisions" unique_id=1522028219]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.9979119, 1.1963936, 0.028442383)
+shape = SubResource("BoxShape3D_lubih")
+
+[node name="wall2" type="CollisionShape3D" parent="house_collisions" unique_id=218304841]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.9659775, 1.1963936, 0.028442383)
+shape = SubResource("BoxShape3D_lubih")
+
+[node name="wall3" type="CollisionShape3D" parent="house_collisions" unique_id=81758061]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.004989624, 1.2943821, -1.8601961)
+shape = SubResource("BoxShape3D_forep")
+
+[node name="boards" type="CollisionShape3D" parent="house_collisions" unique_id=1716132149]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.7339604, 0.84311366, 1.4342762)
+shape = SubResource("BoxShape3D_tdora")
+
+[node name="wall4" type="CollisionShape3D" parent="house_collisions" unique_id=2122476165]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5244048, 1.1593947, 1.912859)
+shape = SubResource("BoxShape3D_t1nu3")

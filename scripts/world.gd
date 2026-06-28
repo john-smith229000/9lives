@@ -33,15 +33,14 @@ const BIT_S := 8   # +Z
 @export_group("Pushable Blocks")
 ## Tiles (grid x, z) that start with a pushable block on them.
 @export var block_tiles: Array[Vector2i] = [Vector2i(12, 10)]
-## Edge length of a pushable block (a bit under 1 so it reads as sitting on a tile).
-@export var block_size: float = 0.8
 
 var _heights: Array = []
 var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
-var _block_mesh: BoxMesh
-var _block_material: StandardMaterial3D
+var _block_starts: Array = []   # [{block, tile}] for restart
+var _block_bottom := -0.375     # crate's lowest point relative to its origin
+var _crate_scene: PackedScene
 
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
@@ -183,27 +182,71 @@ func get_elevation(x: int, z: int) -> float:
 # --- Pushable blocks ------------------------------------------------------
 
 func _spawn_blocks() -> void:
-	_block_mesh = BoxMesh.new()
-	_block_mesh.size = Vector3(block_size, block_size, block_size)
-	_block_material = StandardMaterial3D.new()
-	_block_material.albedo_color = Color(0.85, 0.5, 0.2)   # crate orange
-	_block_material.roughness = 0.9
+	if block_tiles.is_empty():
+		return
+	_crate_scene = load("res://models/crate.glb")
+	if _crate_scene == null:
+		push_warning("World: could not load crate.glb")
+		return
+	_block_bottom = _measure_block_bottom()
 	for tile in block_tiles:
 		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 			continue
 		if _blocks.has(tile):
 			continue
-		var block := MeshInstance3D.new()
-		block.mesh = _block_mesh
-		block.material_override = _block_material
+		var block := _make_crate()
 		block.position = _block_world_pos(tile)
 		_grid_root.add_child(block)
 		_blocks[tile] = block
+		_block_starts.append({"block": block, "tile": tile})
+
+## crate.glb currently holds the whole Blender scene, so pull out just the node
+## named "crate" and drop everything else (the tiles / grass cubes).
+func _make_crate() -> Node3D:
+	var src := _crate_scene.instantiate()
+	var holder := Node3D.new()
+	var crate := src.find_child("crate", true, false)
+	if crate:
+		crate.get_parent().remove_child(crate)
+		holder.add_child(crate)
+	else:
+		push_warning("World: no 'crate' node inside crate.glb")
+	src.queue_free()
+	return holder
+
+## The crate's lowest point relative to its origin, so we can rest it on a tile.
+func _measure_block_bottom() -> float:
+	var inst := _make_crate()
+	add_child(inst)
+	var min_y := INF
+	for mi in _all_mesh_instances(inst):
+		var m := mi as MeshInstance3D
+		var box: AABB = m.global_transform * m.get_aabb()
+		min_y = minf(min_y, box.position.y)
+	inst.queue_free()
+	return -0.375 if is_inf(min_y) else min_y - global_position.y
+
+func _all_mesh_instances(node: Node, acc: Array = []) -> Array:
+	if node is MeshInstance3D:
+		acc.append(node)
+	for c in node.get_children():
+		_all_mesh_instances(c, acc)
+	return acc
+
+## Send every block back to the tile it started on (used by the Restart button).
+func reset_blocks() -> void:
+	_blocks.clear()
+	for s in _block_starts:
+		var block: Node3D = s["block"]
+		var tile: Vector2i = s["tile"]
+		block.position = _block_world_pos(tile)
+		block.rotation = Vector3.ZERO
+		_blocks[tile] = block
 
 func _block_world_pos(tile: Vector2i) -> Vector3:
-	# Sit the block on the tile's top surface (tile top = elevation + 0.5).
+	# Rest the crate's bottom on the tile's top surface (tile top = elevation + 0.5).
 	var surface := get_elevation(tile.x, tile.y) + 0.5
-	return Vector3(tile.x * cell_size, surface + block_size * 0.5, tile.y * cell_size)
+	return Vector3(tile.x * cell_size, surface - _block_bottom, tile.y * cell_size)
 
 ## Called by the player: can it step onto `tile` moving in `dir`?
 ## Returns true (free), false (blocked), or {block, from, to} when a block is

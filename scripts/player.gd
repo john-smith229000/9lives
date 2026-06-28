@@ -26,6 +26,8 @@ extends CharacterBody3D
 @export var push_speed_scale: float = 0.6
 ## Pushed blocks tilt to the step slope, scaled a bit beyond the cat's own pitch.
 @export var block_tilt_extra: float = 1.3
+## Movement speed (m/s) when in free (interior) mode.
+@export var free_speed: float = 3.5
 
 var _grid: Vector2i           # tile we last fully occupied
 var _target_tile: Vector2i    # tile we're currently gliding toward
@@ -38,11 +40,19 @@ var _push: Dictionary = {}    # {block, from, to} while pushing this segment
 var _pushing := false         # true while a push is in progress (slows speed/anim)
 var _was_pushing := false     # previous frame's push state (to detect release)
 var _tilted_block: Node3D     # block currently tilted by a push, so we can level it
+var _tilt_tween: Tween        # active tilt tween (killed on retilt/abort)
+var _turn_tween: Tween        # active model turn/pitch tween (killed on re-turn)
 var _model: Node3D
 var _anim: AnimationPlayer
 var _walk_name := ""    # seamless looping copy, played while moving
 var _rest_name := ""    # original clip; frame 0 is the rest pose for idle
 var _walking := false
+
+# --- Free (interior) mode ---
+const FREE_GRAVITY := 20.0
+var _free_mode := false       # true while moving freely (interior, physics-based)
+var _free_cam: Camera3D       # camera used to orient WASD while free
+var _free_floor_y := 1.0      # min Y, so we never fall through (floor safety net)
 
 ## Set by World: returns a tile's elevation (meters). Lets the cat ride terrain.
 var height_provider: Callable
@@ -61,6 +71,21 @@ func sync_to_grid() -> void:
 	_grid = _world_to_tile(global_position)
 	_target_tile = _grid
 	global_position = _tile_to_world(_grid)
+
+## Cancel any in-progress move/push and snap to the nearest tile. Used on restart
+## so a half-finished push doesn't keep driving a block that was just reset.
+func abort() -> void:
+	if _free_mode:
+		return            # interior free-movement isn't part of the puzzle reset
+	_moving = false
+	_speed = 0.0
+	_push = {}
+	_pushing = false
+	_was_pushing = false
+	_tilted_block = null
+	if _tilt_tween and _tilt_tween.is_valid():
+		_tilt_tween.kill()
+	sync_to_grid()
 
 func _setup_animation() -> void:
 	# Find the AnimationPlayer anywhere under the cat model (its exact path /
@@ -162,6 +187,10 @@ func _find_anim_player(node: Node) -> AnimationPlayer:
 	return null
 
 func _process(delta: float) -> void:
+	if _free_mode:
+		_free_move(delta)
+		_update_anim_speed()
+		return
 	var dir := _read_dir()
 	if not _moving and dir != Vector2i.ZERO:
 		_begin_segment(dir)
@@ -169,6 +198,62 @@ func _process(delta: float) -> void:
 		_advance(delta, dir)
 	_set_walking(_moving)
 	_update_anim_speed()
+
+# --- Free (interior) mode ---------------------------------------------------
+
+## Switch to free, physics-based, camera-relative movement (interior). The cat
+## collides with the house mesh via move_and_slide. Entering/leaving is handled
+## by the house's doorway trigger, not here.
+func enter_free_mode(cam: Camera3D) -> void:
+	_free_cam = cam
+	_free_floor_y = global_position.y   # never fall below where we entered
+	_free_mode = true
+	_moving = false
+	_speed = 0.0
+	_push = {}
+	velocity = Vector3.ZERO
+	if _model:
+		_model.rotation.x = 0.0   # clear any leftover climbing pitch
+
+func exit_free_mode() -> void:
+	_free_mode = false
+	_free_cam = null
+	velocity = Vector3.ZERO
+	sync_to_grid()
+
+func _free_move(delta: float) -> void:
+	# Camera-relative input: W = into the screen, S = toward camera, A/D strafe.
+	var fwd_amt := Input.get_action_strength("move_up") - Input.get_action_strength("move_down")
+	var side_amt := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
+
+	var dir := Vector3.ZERO
+	if _free_cam:
+		var basis := _free_cam.global_transform.basis
+		var fwd := -basis.z; fwd.y = 0.0
+		var right := basis.x; right.y = 0.0
+		dir = fwd.normalized() * fwd_amt + right.normalized() * side_amt
+	dir.y = 0.0
+	var moving := dir.length() > 0.01
+	if moving:
+		dir = dir.normalized()
+
+	# Horizontal velocity from input; gravity settles us onto the floor and
+	# move_and_slide makes us collide/slide along the house walls.
+	velocity.x = dir.x * free_speed
+	velocity.z = dir.z * free_speed
+	velocity.y -= FREE_GRAVITY * delta
+	move_and_slide()
+
+	# Safety net: if the house mesh has no floor collision, don't fall through.
+	if global_position.y < _free_floor_y:
+		global_position.y = _free_floor_y
+		velocity.y = 0.0
+
+	if moving:
+		var target_yaw := atan2(-dir.x, -dir.z)
+		_model.rotation.y = lerp_angle(_model.rotation.y, target_yaw, 1.0 - exp(-12.0 * delta))
+	_moving = moving
+	_set_walking(moving)
 
 func _update_anim_speed() -> void:
 	_pushing = _moving and not _push.is_empty()
@@ -196,16 +281,19 @@ func _tilt_block(dir: Vector2i) -> void:
 		rot.z = dir.x * pitch
 	else:
 		rot.x = -dir.y * pitch
-	var t := create_tween()
-	t.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-	t.tween_property(block, "rotation", rot, turn_time)
+	_start_tilt_tween(block, rot)
 
 func _level_block() -> void:
 	if _tilted_block:
-		var t := create_tween()
-		t.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
-		t.tween_property(_tilted_block, "rotation", Vector3.ZERO, turn_time)
+		_start_tilt_tween(_tilted_block, Vector3.ZERO)
 		_tilted_block = null
+
+func _start_tilt_tween(block: Node3D, target: Vector3) -> void:
+	if _tilt_tween and _tilt_tween.is_valid():
+		_tilt_tween.kill()
+	_tilt_tween = create_tween()
+	_tilt_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	_tilt_tween.tween_property(block, "rotation", target, turn_time)
 
 func _set_walking(walking: bool) -> void:
 	if _anim == null or _walk_name == "" or walking == _walking:
@@ -237,6 +325,10 @@ func _begin_segment(dir: Vector2i) -> bool:
 	var t := _grid + dir
 	if not _in_bounds(t):
 		return false           # edge of board: don't move
+	# Don't let grid steps phase through solid colliders (e.g. house walls from
+	# outside). Tiles have no colliders, so this only blocks at real walls.
+	if test_move(global_transform, _tile_to_world(t) - global_position):
+		return false
 	# Ask World whether the tile is enterable. Returns: false = blocked,
 	# true = free, or {block, from, to} when a block is being pushed.
 	if block_handler.is_valid():
@@ -296,19 +388,21 @@ func _drive_block(progress: float) -> void:
 func _orient(dir: Vector2i, delta_e: float) -> void:
 	if _model == null or dir == Vector2i.ZERO:
 		return
-	# Yaw: turn to face travel direction (model front is -Z). Only re-tween when
-	# the direction actually changes.
+	# Kill any in-flight turn so two tweens can't fight (the "double turn" glitch).
+	if _turn_tween and _turn_tween.is_valid():
+		_turn_tween.kill()
+	_turn_tween = create_tween().set_parallel(true)
+	# Yaw: face travel direction (model front is -Z), taking the SHORTEST path so
+	# it never spins the long way around the circle.
 	if dir != _facing:
 		_facing = dir
 		var d := Vector3(dir.x, 0.0, dir.y)
 		var target_yaw := atan2(-d.x, -d.z)
-		var ty := create_tween()
-		ty.tween_property(_model, "rotation:y", target_yaw, turn_time)
-	# Pitch: tilt the body to match the slope of the upcoming step (nose up when
-	# climbing, down when descending).
+		target_yaw = _model.rotation.y + wrapf(target_yaw - _model.rotation.y, -PI, PI)
+		_turn_tween.tween_property(_model, "rotation:y", target_yaw, turn_time)
+	# Pitch: tilt the body to match the step slope (nose up climbing, down descending).
 	var target_pitch := atan2(delta_e, cell_size)
-	var tp := create_tween()
-	tp.tween_property(_model, "rotation:x", target_pitch, turn_time)
+	_turn_tween.tween_property(_model, "rotation:x", target_pitch, turn_time)
 
 func _level_out() -> void:
 	# Return the body to horizontal when standing still.

@@ -1,0 +1,47 @@
+[gd_scene format=3 uid="uid://ig8xbmuvawmv"]
+
+[ext_resource type="Script" path="res://scripts/pause_menu.gd" id="1_menu"]
+
+[node name="PauseMenu" type="CanvasLayer"]
+process_mode = 3
+script = ExtResource("1_menu")
+
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Dim" type="ColorRect" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.5)
+
+[node name="Center" type="CenterContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Buttons" type="VBoxContainer" parent="Root/Center"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Restart" type="Button" parent="Root/Center/Buttons"]
+custom_minimum_size = Vector2(180, 56)
+layout_mode = 2
+text = "Restart"
+
+[node name="MainMenu" type="Button" parent="Root/Center/Buttons"]
+custom_minimum_size = Vector2(180, 56)
+layout_mode = 2
+text = "Main Menu"
