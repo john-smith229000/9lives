@@ -22,6 +22,10 @@ const BIT_S := 8   # +Z
 @export var grid_size: int = 20
 @export var cell_size: float = 1.0
 @export var ground_y: float = 1.0
+## When false, skip generating the tile terrain (use a custom map mesh instead).
+@export var generate_terrain: bool = true
+## Optional custom map node to auto-generate trimesh collision for (Scene 3).
+@export var map_path: NodePath
 
 @export_group("Terrain")
 @export var height_gradient: float = 0.1
@@ -79,6 +83,7 @@ func _ready() -> void:
 	if _sun:
 		_sun.rotation_degrees = Vector3(-50.0, -55.0, 0.0)
 	_build_grid()
+	_build_map_collision()
 	_spawn_blocks()
 	_spawn_goal()
 	_spawn_balls()
@@ -90,6 +95,21 @@ func _ready() -> void:
 		_player.block_handler = Callable(self, "can_enter")
 		_player.sync_to_grid()
 		_player_start = _player.global_position
+
+## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
+## is blocked by its walls/features.
+func _build_map_collision() -> void:
+	if map_path == NodePath(""):
+		return
+	var map := get_node_or_null(map_path)
+	if map == null:
+		push_warning("World: map_path '%s' not found — no map collision generated." % str(map_path))
+		return
+	var meshes := _all_mesh_instances(map)
+	if meshes.is_empty():
+		push_warning("World: map has no MeshInstance3D to build collision from.")
+	for mi in meshes:
+		(mi as MeshInstance3D).create_trimesh_collision()
 
 func _build_grid() -> void:
 	_noise = FastNoiseLite.new()
@@ -109,19 +129,20 @@ func _build_grid() -> void:
 	for d in _defs:
 		d["top"] = _measure_top(d["scene"])
 
-	# Pass 1: heights.
+	# Pass 1: heights (flat when terrain generation is off, e.g. a custom map).
 	_heights.resize(grid_size)
 	for x in grid_size:
 		var column: Array = []
 		column.resize(grid_size)
 		for z in grid_size:
-			column[z] = _elevation_for(x, z)
+			column[z] = _elevation_for(x, z) if generate_terrain else 0.0
 		_heights[x] = column
 
-	# Pass 2: place a matching beveled tile per cell.
-	for x in grid_size:
-		for z in grid_size:
-			_place_tile(x, z)
+	# Pass 2: place a matching beveled tile per cell (skipped for custom maps).
+	if generate_terrain:
+		for x in grid_size:
+			for z in grid_size:
+				_place_tile(x, z)
 
 func _place_tile(x: int, z: int) -> void:
 	var e: float = float(_heights[x][z])

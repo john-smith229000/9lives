@@ -1,0 +1,43 @@
+[gd_scene format=3 uid="uid://c34n3p8g6hx5p"]
+
+[ext_resource type="Script" uid="uid://x03uvgy7onh6" path="res://scripts/world.gd" id="1_world"]
+[ext_resource type="PackedScene" uid="uid://opda3a6ugedf" path="res://scenes/player.tscn" id="2_player"]
+[ext_resource type="Script" uid="uid://dq5y7pmy6pcj3" path="res://scripts/iso_camera.gd" id="3_camera"]
+[ext_resource type="PackedScene" uid="uid://ig8xbmuvawmv" path="res://scenes/pause_menu.tscn" id="4_menu"]
+[ext_resource type="PackedScene" uid="uid://c6grdh6vqxmfm" path="res://models/scene3_map.glb" id="5_map"]
+
+[sub_resource type="Environment" id="Env_s3"]
+background_mode = 1
+background_color = Color(0.45, 0.62, 0.85, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.7, 0.78, 0.85, 1)
+ambient_light_energy = 0.55
+
+[node name="World" type="Node3D" unique_id=734160682]
+script = ExtResource("1_world")
+generate_terrain = false
+map_path = NodePath("Map")
+block_tiles = Array[Vector2i]([])
+ball_tiles = Array[Vector2i]([])
+
+[node name="Grid" type="Node3D" parent="." unique_id=1419873399]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1475905094]
+environment = SubResource("Env_s3")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1688973808]
+light_energy = 0.3
+shadow_enabled = true
+
+[node name="Map" parent="." unique_id=1124827719 instance=ExtResource("5_map")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.5, 0, 9.5)
+
+[node name="Player" parent="." unique_id=1136839171 instance=ExtResource("2_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 10)
+
+[node name="Camera" type="Camera3D" parent="." unique_id=1724076606]
+script = ExtResource("3_camera")
+target_path = NodePath("../Player")
+ortho_size = 8.0
+
+[node name="PauseMenu" parent="." unique_id=570845962 instance=ExtResource("4_menu")]

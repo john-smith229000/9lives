@@ -28,6 +28,9 @@ extends CharacterBody3D
 @export var block_tilt_extra: float = 1.3
 ## Movement speed (m/s) when in free (interior) mode.
 @export var free_speed: float = 3.5
+## How far above the feet the grid wall-check probes, so a floor mesh under the
+## cat isn't mistaken for a wall (only upright features block).
+@export var wall_check_lift: float = 0.35
 
 var _grid: Vector2i           # tile we last fully occupied
 var _target_tile: Vector2i    # tile we're currently gliding toward
@@ -335,9 +338,11 @@ func _begin_segment(dir: Vector2i) -> bool:
 	var t := _grid + dir
 	if not _in_bounds(t):
 		return false           # edge of board: don't move
-	# Don't let grid steps phase through solid colliders (e.g. house walls from
-	# outside). Tiles have no colliders, so this only blocks at real walls.
-	if test_move(global_transform, _tile_to_world(t) - global_position):
+	# Don't let grid steps phase through solid colliders (e.g. house walls, map
+	# features). Raise the test a little so a full-mesh floor under the cat isn't
+	# treated as a wall — only upright geometry blocks.
+	var lifted := Transform3D(global_transform.basis, global_transform.origin + Vector3.UP * wall_check_lift)
+	if test_move(lifted, _tile_to_world(t) - global_position):
 		return false
 	# Ask World whether the tile is enterable. Returns: false = blocked,
 	# true = free, or {block, from, to} when a block is being pushed.
