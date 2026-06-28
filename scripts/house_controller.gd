@@ -45,6 +45,11 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _player == null:
 		return
+	# If something else (e.g. Restart) took the cat out of free mode, snap back
+	# to the exterior view (toggle from inside -> outside).
+	if _inside and _player.has_method("is_in_free_mode") and not _player.is_in_free_mode():
+		_toggle()
+		return
 	var in_trigger := _point_in_trigger(_player.global_position)
 	if in_trigger and not _was_in_trigger:
 		_toggle()            # crossed the doorway

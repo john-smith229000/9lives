@@ -74,6 +74,16 @@ func sync_to_grid() -> void:
 
 ## Cancel any in-progress move/push and snap to the nearest tile. Used on restart
 ## so a half-finished push doesn't keep driving a block that was just reset.
+func is_in_free_mode() -> bool:
+	return _free_mode
+
+## Teleport back to a start position and stop, leaving the house if inside.
+func reset_to_start(pos: Vector3) -> void:
+	if _free_mode:
+		exit_free_mode()      # leave interior mode (camera reverts via controller)
+	global_position = pos
+	abort()
+
 func abort() -> void:
 	if _free_mode:
 		return            # interior free-movement isn't part of the puzzle reset

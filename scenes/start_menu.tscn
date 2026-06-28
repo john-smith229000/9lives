@@ -34,8 +34,14 @@ theme_override_constants/separation = 16
 
 [node name="Title" type="Label" parent="Center/Panel"]
 layout_mode = 2
-text = "9 Lives"
+text = "Main Menu"
 horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="Center/Panel"]
+layout_mode = 2
+text = "Press H during play to open the menu"
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0.7)
 
 [node name="Scene1" type="Button" parent="Center/Panel"]
 custom_minimum_size = Vector2(220, 56)

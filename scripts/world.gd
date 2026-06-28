@@ -64,6 +64,7 @@ var _goal_h_untriggered := 0.2  # pad height when not triggered
 var _goal_h_triggered := 0.1    # pad height when smushed
 var _goal_pad_extra := 0.0      # current pad height added to the goal tile
 var won := false                # true once the crate is sitting on the goal
+var _player_start := Vector3.ZERO   # cat's start position, for Restart
 
 # --- Balls ---
 var _ball_scene: PackedScene
@@ -88,6 +89,7 @@ func _ready() -> void:
 		_player.height_provider = Callable(self, "get_elevation")
 		_player.block_handler = Callable(self, "can_enter")
 		_player.sync_to_grid()
+		_player_start = _player.global_position
 
 func _build_grid() -> void:
 	_noise = FastNoiseLite.new()
@@ -289,6 +291,9 @@ func reset_blocks() -> void:
 		var node: Node3D = ball["node"]
 		node.position = _ball_world_pos(ball["start"])
 		node.rotation = Vector3.ZERO
+	# Reset the cat back to its starting position.
+	if _player and _player.has_method("reset_to_start"):
+		_player.reset_to_start(_player_start)
 
 func _block_world_pos(tile: Vector2i) -> Vector3:
 	# Rest the crate's bottom on the tile's top surface (tile top = elevation + 0.5).
