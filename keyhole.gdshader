@@ -21,8 +21,8 @@ uniform vec3 cam_forward = vec3(0.0, 0.0, -1.0); // camera look direction
 uniform float aspect = 1.777;              // viewport width / height
 
 // Tunables.
-uniform float radius = 0.05;     // circle size, in screen-height fractions
-uniform float softness = 0.05;   // edge feather
+uniform float radius = 0.16;     // circle size, in screen-height fractions
+uniform float softness = 0.07;   // edge feather
 uniform float min_alpha = 0.0;   // opacity at the center of the circle
 uniform float depth_bias = 0.0;  // metres a surface must be IN FRONT of the cat
                                  // before it starts dissolving (keeps side walls
@@ -30,7 +30,7 @@ uniform float depth_bias = 0.0;  // metres a surface must be IN FRONT of the cat
 // Hard clear zone: pixels within this screen-height fraction of the player are
 // always fully discarded (vis forced to 0), giving a completely dot-free centre.
 // Set to 0.0 to disable. Good starting value: ~0.5–0.7 * radius.
-uniform float clear_radius = 0.12;
+uniform float clear_radius = 0.10;
 
 // 0 = this building is NOT between the camera and the cat, so leave it fully
 // solid. 1 = it is occluding, so run the circle. Eased by World for a soft pop.

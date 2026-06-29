@@ -57,15 +57,19 @@ const BIT_S := 8   # +Z
 ## Soft-circle x-ray so the cat shows through buildings that occlude it.
 @export var enable_keyhole: bool = true
 ## Circle size as a fraction of screen height.
-@export var keyhole_radius: float = 0.16
+@export var keyhole_radius: float = 0.09
 ## Feather width at the circle's edge.
-@export var keyhole_softness: float = 0.07
+@export var keyhole_softness: float = 0.04
 ## Opacity at the center of the circle (0 = fully see-through). Low = clearest
 ## view of the cat; density ramps up toward the circle's edge.
 @export var keyhole_min_alpha: float = 0.04
 ## Metres a surface must be in front of the cat before it dissolves. 0 = the
 ## whole circle dissolves anything closer to the camera than the cat (uniform).
 @export var keyhole_depth_bias: float = 0.0
+## Hard dot-free zone radius (screen-height fraction). Pixels within this
+## distance of the player are always fully discarded — no dither at all.
+## Good value: roughly 0.5–0.7 * keyhole_radius.
+@export var keyhole_clear_radius: float = 0.14
 
 const _KEYHOLE_SHADER: Shader = preload("res://shaders/keyhole.gdshader")
 # One entry per building mesh: {node, mats:[ShaderMaterial], aabb:AABB, active:float}.
@@ -646,6 +650,7 @@ func _keyhole_register(mi: MeshInstance3D) -> void:
 		mat.set_shader_parameter("softness", keyhole_softness)
 		mat.set_shader_parameter("min_alpha", keyhole_min_alpha)
 		mat.set_shader_parameter("depth_bias", keyhole_depth_bias)
+		mat.set_shader_parameter("clear_radius", keyhole_clear_radius)
 		mat.set_shader_parameter("active", 0.0)
 		mi.set_surface_override_material(i, mat)
 		mats.append(mat)
@@ -683,7 +688,7 @@ func _update_keyhole(delta: float) -> void:
 	if vp.x <= 0.0 or vp.y <= 0.0:
 		return
 	var pw := _player.global_position
-	pw.y += 0.4   # aim at the cat's body, not its feet
+	pw.y -= 0.1   # aim at the cat's body
 	var screen := _camera.unproject_position(pw)
 	var su := Vector2(screen.x / vp.x, screen.y / vp.y)
 	# Horizontal-only look direction so a tall wall behind the cat doesn't read as
@@ -720,6 +725,11 @@ func _update_keyhole(delta: float) -> void:
 			m.set_shader_parameter("cam_forward", fwd)
 			m.set_shader_parameter("aspect", asp)
 			m.set_shader_parameter("active", b["active"])
+			m.set_shader_parameter("radius", keyhole_radius)
+			m.set_shader_parameter("softness", keyhole_softness)
+			m.set_shader_parameter("min_alpha", keyhole_min_alpha)
+			m.set_shader_parameter("depth_bias", keyhole_depth_bias)
+			m.set_shader_parameter("clear_radius", keyhole_clear_radius)
 
 ## Keep each crate sitting on whatever surface is under it (ground, or the goal
 ## pad at its current height), easing the Y so it rides the pad / smush smoothly.
