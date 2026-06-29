@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://dq5y7pmy6pcj3" path="res://scripts/iso_camera.gd" id="3_camera"]
 [ext_resource type="PackedScene" uid="uid://ig8xbmuvawmv" path="res://scenes/pause_menu.tscn" id="4_menu"]
 [ext_resource type="PackedScene" uid="uid://c6grdh6vqxmfm" path="res://models/scene3_map.glb" id="5_map"]
+[ext_resource type="PackedScene" path="res://models/scene3_buildings.glb" id="6_buildings"]
 
 [sub_resource type="Environment" id="Env_s3"]
 background_mode = 1
@@ -17,6 +18,7 @@ ambient_light_energy = 0.55
 script = ExtResource("1_world")
 generate_terrain = false
 map_path = NodePath("Map")
+buildings_path = NodePath("Buildings")
 block_tiles = Array[Vector2i]([])
 ball_tiles = Array[Vector2i]([])
 
@@ -30,6 +32,9 @@ light_energy = 0.3
 shadow_enabled = true
 
 [node name="Map" parent="." unique_id=1124827719 instance=ExtResource("5_map")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.5, 0, 9.5)
+
+[node name="Buildings" parent="." instance=ExtResource("6_buildings")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9.5, 0, 9.5)
 
 [node name="Player" parent="." unique_id=1136839171 instance=ExtResource("2_player")]

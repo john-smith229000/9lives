@@ -26,6 +26,10 @@ const BIT_S := 8   # +Z
 @export var generate_terrain: bool = true
 ## Optional custom map node to auto-generate trimesh collision for (Scene 3).
 @export var map_path: NodePath
+## Optional node holding the buildings (separate meshes). When set, the keyhole
+## see-through is applied ONLY to these meshes (so the map/floor stays solid),
+## and trimesh collision is generated for them so the cat routes around them.
+@export var buildings_path: NodePath
 
 @export_group("Terrain")
 @export var height_gradient: float = 0.1
@@ -48,6 +52,25 @@ const BIT_S := 8   # +Z
 ## How much each tile of elevation change adds/removes from the roll distance
 ## (uphill shortens it, downhill lengthens it).
 @export var ball_slope_accel: float = 12.0
+
+@export_group("Keyhole See-Through")
+## Soft-circle x-ray so the cat shows through buildings that occlude it.
+@export var enable_keyhole: bool = true
+## Circle size as a fraction of screen height.
+@export var keyhole_radius: float = 0.16
+## Feather width at the circle's edge.
+@export var keyhole_softness: float = 0.07
+## Opacity at the center of the circle (0 = fully see-through). Low = clearest
+## view of the cat; density ramps up toward the circle's edge.
+@export var keyhole_min_alpha: float = 0.04
+## Metres a surface must be in front of the cat before it dissolves. 0 = the
+## whole circle dissolves anything closer to the camera than the cat (uniform).
+@export var keyhole_depth_bias: float = 0.0
+
+const _KEYHOLE_SHADER: Shader = preload("res://shaders/keyhole.gdshader")
+# One entry per building mesh: {node, mats:[ShaderMaterial], aabb:AABB, active:float}.
+# `active` eases toward 1 while the building sits between the camera and the cat.
+var _keyhole_buildings: Array = []
 
 var _heights: Array = []
 var _noise: FastNoiseLite
@@ -81,6 +104,7 @@ func _ready() -> void:
 		_sun.rotation_degrees = Vector3(-50.0, -55.0, 0.0)
 	_build_grid()
 	_build_map_collision()
+	_build_buildings_collision()
 	_spawn_blocks()
 	_spawn_goal()
 	_spawn_balls()
@@ -94,6 +118,8 @@ func _ready() -> void:
 		_player.sync_to_grid()
 		_player_start = _player.global_position
 	_setup_click_catcher()
+	if enable_keyhole:
+		_apply_keyhole()
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -108,6 +134,19 @@ func _build_map_collision() -> void:
 	if meshes.is_empty():
 		push_warning("World: map has no MeshInstance3D to build collision from.")
 	print("[map] generating collision for ", meshes.size(), " mesh(es) under ", map_path)
+	for mi in meshes:
+		(mi as MeshInstance3D).create_trimesh_collision()
+
+## Generate trimesh collision for the separate building meshes so the cat is
+## blocked by them (the map mesh is now just the floor).
+func _build_buildings_collision() -> void:
+	if buildings_path == NodePath(""):
+		return
+	var buildings := get_node_or_null(buildings_path)
+	if buildings == null:
+		return
+	var meshes := _all_mesh_instances(buildings)
+	print("[buildings] generating collision for ", meshes.size(), " mesh(es) under ", buildings_path)
 	for mi in meshes:
 		(mi as MeshInstance3D).create_trimesh_collision()
 
@@ -561,6 +600,111 @@ func _process(delta: float) -> void:
 	_update_goal()
 	_update_crate_heights(delta)
 	_update_balls(delta)
+	_update_keyhole(delta)
+
+# --- Keyhole see-through --------------------------------------------------
+
+## Register each building mesh with its own keyhole material(s) + world bounds.
+## If buildings_path is set we target ONLY that node (map/floor stays solid).
+## Otherwise we fall back to the rest of the scene (minus terrain & cat).
+func _apply_keyhole() -> void:
+	_keyhole_buildings.clear()
+	var roots: Array = []
+	if buildings_path != NodePath(""):
+		var buildings := get_node_or_null(buildings_path)
+		if buildings:
+			roots.append(buildings)
+		else:
+			push_warning("World: buildings_path '%s' not found." % str(buildings_path))
+	else:
+		for child in get_children():
+			if child == _grid_root or child == _player:
+				continue   # skip terrain + dynamic objects and the cat
+			roots.append(child)
+	for r in roots:
+		for mi in _all_mesh_instances(r):
+			_keyhole_register(mi as MeshInstance3D)
+
+func _keyhole_register(mi: MeshInstance3D) -> void:
+	if mi.mesh == null:
+		return
+	var mats: Array = []
+	for i in mi.mesh.get_surface_count():
+		var mat := ShaderMaterial.new()
+		mat.shader = _KEYHOLE_SHADER
+		var orig := mi.get_active_material(i)
+		if orig is BaseMaterial3D:
+			mat.set_shader_parameter("albedo_color", (orig as BaseMaterial3D).albedo_color)
+			var tex := (orig as BaseMaterial3D).albedo_texture
+			if tex:
+				mat.set_shader_parameter("albedo_tex", tex)
+				mat.set_shader_parameter("use_tex", true)
+		mat.set_shader_parameter("radius", keyhole_radius)
+		mat.set_shader_parameter("softness", keyhole_softness)
+		mat.set_shader_parameter("min_alpha", keyhole_min_alpha)
+		mat.set_shader_parameter("depth_bias", keyhole_depth_bias)
+		mat.set_shader_parameter("active", 0.0)
+		mi.set_surface_override_material(i, mat)
+		mats.append(mat)
+	# World-space bounds, used to test whether the camera->cat line passes through
+	# this building (i.e. it's actually occluding the cat).
+	var world_aabb: AABB = mi.global_transform * mi.get_aabb()
+	_keyhole_buildings.append({"node": mi, "mats": mats, "aabb": world_aabb, "active": 0.0})
+
+## Feed the cat's screen position to every building, and switch each building's
+## effect on/off depending on whether it actually sits between camera and cat.
+func _update_keyhole(delta: float) -> void:
+	if _keyhole_buildings.is_empty() or _camera == null or _player == null:
+		return
+	# Inside the house a different camera renders, so park the circle off-screen
+	# and force every building solid until we're back to the iso view.
+	if _player.has_method("is_in_free_mode") and _player.is_in_free_mode():
+		for b in _keyhole_buildings:
+			b["active"] = 0.0
+			for m in b["mats"]:
+				m.set_shader_parameter("active", 0.0)
+		return
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x <= 0.0 or vp.y <= 0.0:
+		return
+	var pw := _player.global_position
+	pw.y += 0.4   # aim at the cat's body, not its feet
+	var screen := _camera.unproject_position(pw)
+	var su := Vector2(screen.x / vp.x, screen.y / vp.y)
+	# Horizontal-only look direction so a tall wall behind the cat doesn't read as
+	# "in front" just because it's high.
+	var fwd := -_camera.global_transform.basis.z
+	fwd.y = 0.0
+	if fwd.length() > 0.0001:
+		fwd = fwd.normalized()
+	var asp := vp.x / vp.y
+	# Sample lines from the camera to points along the cat's VERTICAL axis only
+	# (feet / middle / head). Staying on the cat's exact x,z means these lines
+	# can't reach a wall behind the cat, so a building only activates when it's
+	# truly between the camera and the cat — not one the cat is standing before.
+	var cam_pos := _camera.global_position
+	var foot := _player.global_position
+	var targets: Array[Vector3] = [
+		foot + Vector3(0.0, 0.05, 0.0),
+		foot + Vector3(0.0, 0.45, 0.0),
+		foot + Vector3(0.0, 0.85, 0.0),
+	]
+	var ease := 1.0 - exp(-14.0 * delta)
+	for b in _keyhole_buildings:
+		var aabb: AABB = b["aabb"]
+		var occluding := false
+		for t in targets:
+			if aabb.intersects_segment(cam_pos, t):
+				occluding = true
+				break
+		var target := 1.0 if occluding else 0.0
+		b["active"] = lerpf(float(b["active"]), target, ease)
+		for m in b["mats"]:
+			m.set_shader_parameter("player_screen", su)
+			m.set_shader_parameter("player_world", pw)
+			m.set_shader_parameter("cam_forward", fwd)
+			m.set_shader_parameter("aspect", asp)
+			m.set_shader_parameter("active", b["active"])
 
 ## Keep each crate sitting on whatever surface is under it (ground, or the goal
 ## pad at its current height), easing the Y so it rides the pad / smush smoothly.
