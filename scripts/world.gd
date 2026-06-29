@@ -713,10 +713,13 @@ func _update_keyhole(delta: float) -> void:
 	for b in _keyhole_buildings:
 		var aabb: AABB = b["aabb"]
 		var occluding := false
-		for t in targets:
-			if aabb.intersects_segment(cam_pos, t):
-				occluding = true
-				break
+		# Skip occlusion if the cat is inside/under this building's bounding box —
+		# the AABB test would fire even through open arches or when walking inside.
+		if not aabb.has_point(foot):
+			for t in targets:
+				if aabb.intersects_segment(cam_pos, t):
+					occluding = true
+					break
 		var target := 1.0 if occluding else 0.0
 		b["active"] = lerpf(float(b["active"]), target, ease_w)
 		for m in b["mats"]:
