@@ -32,7 +32,7 @@ transform = Transform3D(1, 0, 0, 0, 0.7727446, 0.6347171, 0, -0.6347171, 0.77274
 fov = 80.0
 
 [node name="SpotLight3D" type="SpotLight3D" parent="." unique_id=1945605072]
-transform = Transform3D(1, 0, 0, 0, 0.0038048346, 0.99999285, 0, -0.99999285, 0.0038048346, 0, 2.755626, 0.017407656)
+transform = Transform3D(1, 0, 0, 0, 0.0038048346, 0.99999285, 0, -0.99999285, 0.0038048346, 0, 2.244781, 0.017)
 light_size = 3.0
 light_specular = 0.1
 shadow_enabled = true
@@ -50,7 +50,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8195587, 1.1963936, 0.0284
 shape = SubResource("BoxShape3D_lubih")
 
 [node name="wall3" type="CollisionShape3D" parent="house_collisions" unique_id=81758061]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.004989624, 1.2943821, -1.8601961)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0234828, 1.2943821, -1.8114393)
 shape = SubResource("BoxShape3D_forep")
 
 [node name="boards" type="CollisionShape3D" parent="house_collisions" unique_id=1716132149]

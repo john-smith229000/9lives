@@ -37,6 +37,7 @@ extends CharacterBody3D
 var view_camera: Node = null
 
 var _grid: Vector2i           # tile we last fully occupied
+var _tile_box: BoxShape3D     # reusable probe box for the tile-overlap wall check
 var _target_tile: Vector2i    # tile we're currently gliding toward
 var _moving := false
 var _speed := 0.0             # current scalar speed (units/sec)
@@ -257,7 +258,19 @@ func _tile_blocked(tile: Vector2i) -> bool:
 		var hit := space.intersect_ray(params)
 		if not hit.is_empty() and float(hit["position"].y) > surface + wall_check_lift:
 			return true
-	return false
+	# The rays above can slip between thin walls (e.g. a 0.16 m collision box that
+	# doesn't line up with a probe point). Also overlap-test a box covering the
+	# whole tile footprint, sitting just above the floor so it ignores the ground
+	# but catches any upright wall the rays missed.
+	if _tile_box == null:
+		_tile_box = BoxShape3D.new()
+		_tile_box.size = Vector3(cell_size * 0.9, 0.4, cell_size * 0.9)
+	var sp := PhysicsShapeQueryParameters3D.new()
+	sp.shape = _tile_box
+	sp.transform = Transform3D(Basis(), Vector3(w.x, surface + wall_check_lift + 0.2, w.z))
+	sp.collision_mask = collision_mask
+	sp.exclude = [get_rid()]
+	return not space.intersect_shape(sp, 1).is_empty()
 
 ## Follow this list of tiles (each step cardinal-adjacent). Manual input cancels.
 func set_path(path: Array) -> void:

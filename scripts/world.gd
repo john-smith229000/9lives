@@ -71,6 +71,9 @@ const _KEYHOLE_SHADER: Shader = preload("res://shaders/keyhole.gdshader")
 # One entry per building mesh: {node, mats:[ShaderMaterial], aabb:AABB, active:float}.
 # `active` eases toward 1 while the building sits between the camera and the cat.
 var _keyhole_buildings: Array = []
+# While inside (free mode) we strip the keyhole materials so the building renders
+# with its original material (spotlight, culling, etc. all behave normally).
+var _keyhole_inside := false
 
 var _heights: Array = []
 var _noise: FastNoiseLite
@@ -651,18 +654,30 @@ func _keyhole_register(mi: MeshInstance3D) -> void:
 	var world_aabb: AABB = mi.global_transform * mi.get_aabb()
 	_keyhole_buildings.append({"node": mi, "mats": mats, "aabb": world_aabb, "active": 0.0})
 
+## Swap the keyhole shader on (true) or restore each building's original glb
+## material (false, used while inside in free mode).
+func _set_keyhole_materials(enabled: bool) -> void:
+	for b in _keyhole_buildings:
+		var mi = b["node"]
+		if not is_instance_valid(mi):
+			continue
+		var mats: Array = b["mats"]
+		for i in mats.size():
+			mi.set_surface_override_material(i, mats[i] if enabled else null)
+
 ## Feed the cat's screen position to every building, and switch each building's
 ## effect on/off depending on whether it actually sits between camera and cat.
 func _update_keyhole(delta: float) -> void:
 	if _keyhole_buildings.is_empty() or _camera == null or _player == null:
 		return
-	# Inside the house a different camera renders, so park the circle off-screen
-	# and force every building solid until we're back to the iso view.
-	if _player.has_method("is_in_free_mode") and _player.is_in_free_mode():
-		for b in _keyhole_buildings:
-			b["active"] = 0.0
-			for m in b["mats"]:
-				m.set_shader_parameter("active", 0.0)
+	# When the cat steps inside (free mode) we render the building with its
+	# ORIGINAL material so its lighting (spotlight), culling, etc. all behave;
+	# the keyhole shader only goes back on once we're outside in the iso view.
+	var inside: bool = _player.has_method("is_in_free_mode") and _player.is_in_free_mode()
+	if inside != _keyhole_inside:
+		_keyhole_inside = inside
+		_set_keyhole_materials(not inside)
+	if inside:
 		return
 	var vp := get_viewport().get_visible_rect().size
 	if vp.x <= 0.0 or vp.y <= 0.0:
@@ -689,7 +704,7 @@ func _update_keyhole(delta: float) -> void:
 		foot + Vector3(0.0, 0.45, 0.0),
 		foot + Vector3(0.0, 0.85, 0.0),
 	]
-	var ease := 1.0 - exp(-14.0 * delta)
+	var ease_w := 1.0 - exp(-14.0 * delta)
 	for b in _keyhole_buildings:
 		var aabb: AABB = b["aabb"]
 		var occluding := false
@@ -698,7 +713,7 @@ func _update_keyhole(delta: float) -> void:
 				occluding = true
 				break
 		var target := 1.0 if occluding else 0.0
-		b["active"] = lerpf(float(b["active"]), target, ease)
+		b["active"] = lerpf(float(b["active"]), target, ease_w)
 		for m in b["mats"]:
 			m.set_shader_parameter("player_screen", su)
 			m.set_shader_parameter("player_world", pw)

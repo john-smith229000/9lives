@@ -10,6 +10,9 @@ extends Node
 ## Path (within the house) to the CollisionShape3D used as the doorway trigger.
 @export var collision_path: String = "inside_house/inside_house_collision"
 
+## Seconds for each half (fade out / fade in) of the black transition.
+@export var fade_time: float = 0.18
+
 var _player: Node3D
 var _ext_cam: Camera3D
 var _inside_cam: Camera3D
@@ -17,6 +20,8 @@ var _trigger: CollisionShape3D
 var _trigger_size := Vector3.ONE
 var _inside := false
 var _was_in_trigger := false
+var _fade: ColorRect
+var _transitioning := false
 
 func _ready() -> void:
 	_player = get_node_or_null(player_path)
@@ -41,9 +46,21 @@ func _ready() -> void:
 		return
 	# Wall collision comes from the hand-placed "house_collisions" StaticBody in
 	# the house scene, so there's nothing to generate here.
+	_make_fade()
+
+## Full-screen black overlay used to hide the camera/lighting swap on entry/exit.
+func _make_fade() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 100              # above gameplay (and the pause menu)
+	add_child(layer)
+	_fade = ColorRect.new()
+	_fade.color = Color(0, 0, 0, 0)
+	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE   # never eats clicks
+	layer.add_child(_fade)
 
 func _process(_delta: float) -> void:
-	if _player == null:
+	if _player == null or _transitioning:
 		return
 	# If something else (e.g. Restart) took the cat out of free mode, snap back
 	# to the exterior view (toggle from inside -> outside).
@@ -62,6 +79,21 @@ func _point_in_trigger(p: Vector3) -> bool:
 	return absf(local.x) <= h.x and absf(local.z) <= h.z
 
 func _toggle() -> void:
+	if _transitioning:
+		return
+	_transitioning = true
+	if _fade:
+		# Fade to black, swap at the peak (hidden), fade back in.
+		var t := create_tween()
+		t.tween_property(_fade, "color:a", 1.0, fade_time)
+		t.tween_callback(_do_switch)
+		t.tween_property(_fade, "color:a", 0.0, fade_time)
+		t.tween_callback(func() -> void: _transitioning = false)
+	else:
+		_do_switch()
+		_transitioning = false
+
+func _do_switch() -> void:
 	_inside = not _inside
 	if _inside:
 		if _inside_cam:

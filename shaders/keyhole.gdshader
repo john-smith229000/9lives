@@ -5,7 +5,9 @@
 // normally (no flicker / dropped faces, which alpha blend causes in the GL
 // Compatibility renderer). "Transparency" = discarding a stipple of pixels.
 shader_type spatial;
-render_mode cull_back;
+// cull_disabled so single-sided walls stay visible from the inside too (the
+// original glb materials are double-sided; cull_back would hide interior faces).
+render_mode cull_disabled;
 
 // Preserved from the original material so the building keeps its look.
 uniform sampler2D albedo_tex : source_color, hint_default_white;
@@ -52,6 +54,13 @@ void fragment() {
 		col *= texture(albedo_tex, UV);
 	}
 	ALBEDO = col.rgb;
+
+	// With cull_disabled we draw back faces too (e.g. interior wall faces). Flip
+	// their normal so lights — like the house spotlight — illuminate them instead
+	// of treating them as lit-from-behind and leaving them dark.
+	if (!FRONT_FACING) {
+		NORMAL = -NORMAL;
+	}
 
 	float vis = 1.0;
 	// `active` already means "this building is the one occluding the cat", so we
