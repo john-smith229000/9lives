@@ -57,17 +57,10 @@ var _block_starts: Array = []   # [{block, tile}] for restart
 var _block_bottom := -0.375     # crate's lowest point relative to its origin
 var _crate_scene: PackedScene
 
-# --- Goal ---
-var _goal_tile := Vector2i(-1, -1)
-var _goal_node: Node3D
-var _goal_scene: PackedScene
-var _goal_triggered_scene: PackedScene
-var _goal_bottom := 0.0
-var _goal_tri_bottom := 0.0
-var _goal_h_untriggered := 0.2  # pad height when not triggered
-var _goal_h_triggered := 0.1    # pad height when smushed
-var _goal_pad_extra := 0.0      # current pad height added to the goal tile
-var won := false                # true once the crate is sitting on the goal
+# --- Goals ---
+# Each goal: {tile, untriggered, triggered, bottom, tri_bottom, h_unt, h_tri,
+#             node, won, by ("crate"/"ball"), pad_extra}
+var _goals: Array = []
 var _player_start := Vector3.ZERO   # cat's start position, for Restart
 
 # --- Balls ---
@@ -97,6 +90,7 @@ func _ready() -> void:
 		_player.ground_y = ground_y
 		_player.height_provider = Callable(self, "get_elevation")
 		_player.block_handler = Callable(self, "can_enter")
+		_player.view_camera = _camera
 		_player.sync_to_grid()
 		_player_start = _player.global_position
 	_setup_click_catcher()
@@ -113,6 +107,7 @@ func _build_map_collision() -> void:
 	var meshes := _all_mesh_instances(map)
 	if meshes.is_empty():
 		push_warning("World: map has no MeshInstance3D to build collision from.")
+	print("[map] generating collision for ", meshes.size(), " mesh(es) under ", map_path)
 	for mi in meshes:
 		(mi as MeshInstance3D).create_trimesh_collision()
 
@@ -236,8 +231,9 @@ func _elevation_for(x: int, z: int) -> float:
 func get_elevation(x: int, z: int) -> float:
 	if x >= 0 and x < grid_size and z >= 0 and z < grid_size:
 		var e: float = _heights[x][z]
-		if x == _goal_tile.x and z == _goal_tile.y:
-			e += _goal_pad_extra
+		for goal in _goals:
+			if goal["tile"].x == x and goal["tile"].y == z:
+				e += goal["pad_extra"]
 		return e
 	return 0.0
 
@@ -305,10 +301,11 @@ func reset_blocks() -> void:
 		block.position = _block_world_pos(tile)
 		block.rotation = Vector3.ZERO
 		_blocks[tile] = block
-	# Reset the goal back to its un-triggered tile.
-	if won:
-		won = false
-		_place_goal(false)
+	# Reset every goal back to its un-triggered state.
+	for goal in _goals:
+		if goal["won"]:
+			goal["won"] = false
+			_place_goal(goal, false)
 	# Reset balls to their start tiles, stationary.
 	for ball in _balls:
 		ball["resting"] = true
@@ -321,6 +318,9 @@ func reset_blocks() -> void:
 	# Reset the cat back to its starting position.
 	if _player and _player.has_method("reset_to_start"):
 		_player.reset_to_start(_player_start)
+	# Swing the camera back to the default orientation.
+	if _camera and _camera.has_method("reset_rotation"):
+		_camera.reset_rotation()
 
 func _block_world_pos(tile: Vector2i) -> Vector3:
 	# Rest the crate's bottom on the tile's top surface (tile top = elevation + 0.5).
@@ -456,26 +456,20 @@ func _path_walkable(tile: Vector2i) -> bool:
 			return false
 	return not _obstacle.has(tile)
 
-## Cache which tiles are blocked by the custom map's geometry (Scene 3), once.
+## Cache which tiles are blocked by static geometry (house walls, map features),
+## once, using the cat's own collision so it matches what blocks movement.
 func _ensure_obstacles() -> void:
 	if _obstacle_built:
 		return
-	if map_path == NodePath(""):
+	if _player == null or not _player.has_method("is_tile_blocked"):
 		_obstacle_built = true
 		return
-	var space := get_world_3d().direct_space_state
-	if space == null:
-		return                                # try again on the next click
+	if get_world_3d().direct_space_state == null:
+		return                                # physics not ready yet — retry next click
 	_obstacle_built = true
-	var shape := BoxShape3D.new()
-	shape.size = Vector3(0.6, 0.6, 0.6)
-	var params := PhysicsShapeQueryParameters3D.new()
-	params.shape = shape
-	params.exclude = [_player.get_rid()]      # ignore the cat itself
 	for x in grid_size:
 		for z in grid_size:
-			params.transform = Transform3D(Basis(), Vector3(x * cell_size, ground_y, z * cell_size))
-			if not space.intersect_shape(params, 1).is_empty():
+			if _player.is_tile_blocked(Vector2i(x, z)):
 				_obstacle[Vector2i(x, z)] = true
 
 ## Called by the player: can it step onto `tile` moving in `dir`?
@@ -504,49 +498,64 @@ func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 # --- Goal ----------------------------------------------------------------
 
 func _spawn_goal() -> void:
-	if block_tiles.is_empty():
-		return                      # only meaningful where there's a crate to push
-	_goal_scene = load("res://models/goal_tile.glb")
-	_goal_triggered_scene = load("res://models/goal_tile_triggered.glb")
-	if _goal_scene == null or _goal_triggered_scene == null:
-		push_warning("World: goal tile glb(s) missing.")
-		return
-	var a0 := _measure_aabb_y(_goal_scene)            # untriggered (min_y, max_y)
-	var a1 := _measure_aabb_y(_goal_triggered_scene)  # triggered
-	_goal_bottom = a0.x
-	_goal_tri_bottom = a1.x
-	_goal_h_untriggered = a0.y - a0.x
-	_goal_h_triggered = a1.y - a1.x
-	_goal_tile = _pick_goal_tile()
-	_place_goal(false)
+	# Crate-triggered goal (only where there's a crate), and a ball-triggered one.
+	if not block_tiles.is_empty():
+		_add_goal("res://models/goal_tile.glb", "res://models/goal_tile_triggered.glb", "crate")
+	if not ball_tiles.is_empty():
+		_add_goal("res://models/goal_tile_b.glb", "res://models/goal_tile_b_triggered.glb", "ball")
 
-## A random tile that isn't the player's or a crate's start tile.
+func _add_goal(unt_path: String, tri_path: String, by: String) -> void:
+	var unt: PackedScene = load(unt_path)
+	var tri: PackedScene = load(tri_path)
+	if unt == null or tri == null:
+		push_warning("World: goal glb(s) missing for " + by)
+		return
+	var a0 := _measure_aabb_y(unt)
+	var a1 := _measure_aabb_y(tri)
+	var goal := {
+		"tile": _pick_goal_tile(), "untriggered": unt, "triggered": tri,
+		"bottom": a0.x, "tri_bottom": a1.x,
+		"h_unt": a0.y - a0.x, "h_tri": a1.y - a1.x,
+		"node": null, "won": false, "by": by, "pad_extra": 0.0,
+	}
+	_goals.append(goal)
+	_place_goal(goal, false)
+
+## A random tile not used by the player, crates, balls, or an existing goal.
 func _pick_goal_tile() -> Vector2i:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = terrain_seed + 7
 	var player_tile := Vector2i(10, 10)
 	if _player:
 		player_tile = Vector2i(roundi(_player.global_position.x / cell_size), roundi(_player.global_position.z / cell_size))
-	for _i in 100:
+	for _i in 200:
 		var t := Vector2i(rng.randi_range(0, grid_size - 1), rng.randi_range(0, grid_size - 1))
-		if t == player_tile or t in block_tiles:
+		if t == player_tile or t in block_tiles or t in ball_tiles:
 			continue
-		return t
+		var clash := false
+		for g in _goals:
+			if g["tile"] == t:
+				clash = true
+				break
+		if not clash:
+			return t
 	return Vector2i(0, 0)
 
-func _place_goal(triggered: bool) -> void:
-	if _goal_node:
-		_goal_node.queue_free()
-	var scene := _goal_triggered_scene if triggered else _goal_scene
-	_goal_node = scene.instantiate()
-	# Use the RAW terrain height (not get_elevation, which adds the pad) so the
-	# pad always rests on the ground instead of floating on its own height.
-	var surface := float(_heights[_goal_tile.x][_goal_tile.y]) + 0.5
-	var bottom := _goal_tri_bottom if triggered else _goal_bottom
-	_goal_node.position = Vector3(_goal_tile.x * cell_size, surface - bottom, _goal_tile.y * cell_size)
-	_grid_root.add_child(_goal_node)
-	# Things standing on the goal tile ride on top of the pad at its current height.
-	_goal_pad_extra = _goal_h_triggered if triggered else _goal_h_untriggered
+func _place_goal(goal: Dictionary, triggered: bool) -> void:
+	if goal["node"]:
+		(goal["node"] as Node3D).queue_free()
+	var scene: PackedScene = goal["triggered"] if triggered else goal["untriggered"]
+	var node := scene.instantiate() as Node3D
+	var tile: Vector2i = goal["tile"]
+	# Raw terrain height (not get_elevation, which adds the pad) so the pad rests
+	# on the ground rather than floating on its own height.
+	var surface := float(_heights[tile.x][tile.y]) + 0.5
+	var bottom: float = goal["tri_bottom"] if triggered else goal["bottom"]
+	node.position = Vector3(tile.x * cell_size, surface - bottom, tile.y * cell_size)
+	_grid_root.add_child(node)
+	goal["node"] = node
+	# Things standing on the tile ride on top of the pad at its current height.
+	goal["pad_extra"] = goal["h_tri"] if triggered else goal["h_unt"]
 
 func _process(delta: float) -> void:
 	_update_goal()
@@ -564,25 +573,30 @@ func _update_crate_heights(delta: float) -> void:
 		var target_y := (get_elevation(tx, tz) + 0.5) - _block_bottom
 		b.position.y = lerpf(b.position.y, target_y, 1.0 - exp(-15.0 * delta))
 
-## Toggle the goal based on how much a crate actually covers it. Triggers once a
-## crate covers ~40% of the tile and releases when it slides back off (hysteresis
-## prevents flicker right at the threshold).
+## Toggle each goal by how much its triggering object (crate or ball) covers it.
+## Triggers at ~40% coverage, releases below 30% (hysteresis avoids flicker).
 func _update_goal() -> void:
-	if _goal_tile.x < 0 or _goal_node == null:
-		return
-	var gx := _goal_tile.x * cell_size
-	var gz := _goal_tile.y * cell_size
-	var best_cover := 0.0
-	for tile in _blocks:
-		var b: Node3D = _blocks[tile]
-		var d := Vector2(b.position.x - gx, b.position.z - gz).length()
-		best_cover = maxf(best_cover, clampf(1.0 - d / cell_size, 0.0, 1.0))
-	if not won and best_cover >= 0.4:
-		won = true
-		_place_goal(true)
-	elif won and best_cover < 0.3:
-		won = false
-		_place_goal(false)
+	for goal in _goals:
+		if goal["node"] == null:
+			continue
+		var tile: Vector2i = goal["tile"]
+		var gx := tile.x * cell_size
+		var gz := tile.y * cell_size
+		var best := 0.0
+		if goal["by"] == "ball":
+			for ball in _balls:
+				var n: Node3D = ball["node"]
+				best = maxf(best, clampf(1.0 - Vector2(n.position.x - gx, n.position.z - gz).length() / cell_size, 0.0, 1.0))
+		else:
+			for bt in _blocks:
+				var b: Node3D = _blocks[bt]
+				best = maxf(best, clampf(1.0 - Vector2(b.position.x - gx, b.position.z - gz).length() / cell_size, 0.0, 1.0))
+		if not goal["won"] and best >= 0.4:
+			goal["won"] = true
+			_place_goal(goal, true)
+		elif goal["won"] and best < 0.3:
+			goal["won"] = false
+			_place_goal(goal, false)
 
 # --- Rolling balls -------------------------------------------------------
 

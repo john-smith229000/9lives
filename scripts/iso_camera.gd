@@ -20,6 +20,8 @@ extends Camera3D
 @export var zoom_step: float = 1.0
 ## Follow smoothing. 0 = instant snap, higher = smoother lag.
 @export var follow_smooth: float = 8.0
+## Seconds for one 90° swing when rotating (Q/E). Higher = slower, smoother turn.
+@export var rotate_time: float = 0.9
 ## Tight near/far planes. The default range (0.05..4000) wrecks depth-buffer
 ## precision in orthographic mode and causes coplanar cube faces to z-fight
 ## (the flickering edges). Keeping the range small fixes it.
@@ -28,6 +30,16 @@ extends Camera3D
 
 var _target: Node3D
 var _offset: Vector3
+# Smoothed point the camera orbits/looks at. Equals the player when standing
+# still, lags a touch while it moves. We orbit THIS so the cat stays centered.
+var _focus: Vector3
+# How many 90° steps we've rotated from the default view. +1 per E, -1 per Q.
+var _quadrant: int = 0
+# Eased 90° turn: yaw lerps from _yaw_from to _yaw_to as _rot_t goes 0 -> 1.
+var _cur_yaw: float = 0.0
+var _yaw_from: float = 0.0
+var _yaw_to: float = 0.0
+var _rot_t: float = 1.0
 
 func _ready() -> void:
 	projection = PROJECTION_ORTHOGONAL
@@ -35,15 +47,38 @@ func _ready() -> void:
 	size = ortho_size
 	near = near_plane
 	far = far_plane
-	rotation = Vector3(deg_to_rad(pitch_deg), deg_to_rad(yaw_deg), 0.0)
-	# basis.z is the camera's local +Z (pointing backward), so target + that * distance
-	# places the camera behind/above the target along the view axis.
+	_cur_yaw = deg_to_rad(yaw_deg)
+	_yaw_from = _cur_yaw
+	_yaw_to = _cur_yaw
+	rotation = Vector3(deg_to_rad(pitch_deg), _cur_yaw, 0.0)
+	# basis.z is the camera's local +Z (pointing backward), so focus + that * distance
+	# places the camera behind/above the focus point along the view axis.
 	_offset = global_transform.basis.z * distance
 	if target_path != NodePath(""):
 		_target = get_node_or_null(target_path) as Node3D
 	if _target:
-		global_position = _target.global_position + _offset
+		_focus = _target.global_position
+		global_position = _focus + _offset
 	make_current()
+
+## How many 90° steps the view is rotated from default, normalized to 0..3.
+## The player reads this to keep WASD aligned with the on-screen view.
+func get_quadrant() -> int:
+	return ((_quadrant % 4) + 4) % 4
+
+## Snap the view back to the default orientation (used on restart).
+func reset_rotation() -> void:
+	_quadrant = 0
+	_cur_yaw = deg_to_rad(yaw_deg)
+	_yaw_from = _cur_yaw
+	_yaw_to = _cur_yaw
+	_rot_t = 1.0
+
+## Kick off a fresh eased swing toward the current quadrant's yaw.
+func _start_turn() -> void:
+	_yaw_from = _cur_yaw
+	_yaw_to = deg_to_rad(yaw_deg + float(_quadrant) * 90.0)
+	_rot_t = 0.0
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Mouse middle/wheel scroll: each notch steps the zoom.
@@ -55,6 +90,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Trackpad pinch (magnify gesture): factor > 1 = fingers spreading = zoom in.
 	elif event is InputEventMagnifyGesture:
 		_set_zoom(ortho_size / event.factor)
+	# Q / E swing the view 90° at a time.
+	if event.is_action_pressed("rotate_left"):
+		_quadrant -= 1
+		_start_turn()
+	elif event.is_action_pressed("rotate_right"):
+		_quadrant += 1
+		_start_turn()
 
 func _apply_zoom(delta_size: float) -> void:
 	_set_zoom(ortho_size + delta_size)
@@ -64,10 +106,21 @@ func _set_zoom(new_size: float) -> void:
 	size = ortho_size
 
 func _process(delta: float) -> void:
+	# Ease the yaw over a fixed duration with a smoothstep so the 90° turn starts
+	# and ends gently. lerp_angle takes the short way, so it's a clean quarter turn.
+	if _rot_t < 1.0:
+		_rot_t = minf(1.0, _rot_t + delta / maxf(rotate_time, 0.0001))
+		var e := _rot_t * _rot_t * (3.0 - 2.0 * _rot_t)   # smoothstep ease
+		_cur_yaw = lerp_angle(_yaw_from, _yaw_to, e)
+	rotation = Vector3(deg_to_rad(pitch_deg), _cur_yaw, 0.0)
+	_offset = global_transform.basis.z * distance
 	if _target == null:
 		return
-	var desired := _target.global_position + _offset
+	# Smooth the focus point toward the player, then place the camera at a rigid
+	# offset from it. Rotation orbits this focus, so the cat never swings off
+	# center while the view spins.
 	if follow_smooth <= 0.0:
-		global_position = desired
+		_focus = _target.global_position
 	else:
-		global_position = global_position.lerp(desired, 1.0 - exp(-follow_smooth * delta))
+		_focus = _focus.lerp(_target.global_position, 1.0 - exp(-follow_smooth * delta))
+	global_position = _focus + _offset

@@ -32,6 +32,10 @@ extends CharacterBody3D
 ## cat isn't mistaken for a wall (only upright features block).
 @export var wall_check_lift: float = 0.35
 
+# Set by World. Lets WASD follow the camera as it rotates (Q/E) so "up" on
+# screen always walks the cat up-screen, no matter which way the view faces.
+var view_camera: Node = null
+
 var _grid: Vector2i           # tile we last fully occupied
 var _target_tile: Vector2i    # tile we're currently gliding toward
 var _moving := false
@@ -223,6 +227,38 @@ func _process(delta: float) -> void:
 func nav_tile() -> Vector2i:
 	return _target_tile if _moving else _grid
 
+## Would the cat be blocked by static geometry on this tile? Uses a small,
+## symmetric probe (same one the grid wall-check uses) so movement and
+## pathfinding agree and tight gaps stay passable.
+func is_tile_blocked(tile: Vector2i) -> bool:
+	return _tile_blocked(tile)
+
+const _TILE_SAMPLES := [
+	Vector2(0, 0),
+	Vector2(0.4, 0), Vector2(-0.4, 0), Vector2(0, 0.4), Vector2(0, -0.4),
+	Vector2(0.4, 0.4), Vector2(-0.4, -0.4), Vector2(0.4, -0.4), Vector2(-0.4, 0.4),
+]
+
+func _tile_blocked(tile: Vector2i) -> bool:
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return false
+	# Cast straight down at several points across the tile. A hit well above the
+	# walkable surface means a wall/feature occupies it — sampling the whole tile
+	# (not just the centre) catches walls that don't sit on the tile centre.
+	var w := _tile_to_world(tile)
+	var surface := w.y - 0.5
+	for o in _TILE_SAMPLES:
+		var params := PhysicsRayQueryParameters3D.create(
+			Vector3(w.x + o.x, w.y + 9.0, w.z + o.y),
+			Vector3(w.x + o.x, surface - 1.0, w.z + o.y))
+		params.collision_mask = collision_mask
+		params.exclude = [get_rid()]
+		var hit := space.intersect_ray(params)
+		if not hit.is_empty() and float(hit["position"].y) > surface + wall_check_lift:
+			return true
+	return false
+
 ## Follow this list of tiles (each step cardinal-adjacent). Manual input cancels.
 func set_path(path: Array) -> void:
 	_path = path.duplicate()
@@ -362,26 +398,43 @@ func _set_walking(walking: bool) -> void:
 		_level_out()
 
 func _read_dir() -> Vector2i:
+	var base := Vector2i.ZERO
 	if Input.is_action_pressed("move_up"):
-		return Vector2i(0, -1)
-	if Input.is_action_pressed("move_down"):
-		return Vector2i(0, 1)
-	if Input.is_action_pressed("move_left"):
-		return Vector2i(-1, 0)
-	if Input.is_action_pressed("move_right"):
-		return Vector2i(1, 0)
-	return Vector2i.ZERO
+		base = Vector2i(0, -1)
+	elif Input.is_action_pressed("move_down"):
+		base = Vector2i(0, 1)
+	elif Input.is_action_pressed("move_left"):
+		base = Vector2i(-1, 0)
+	elif Input.is_action_pressed("move_right"):
+		base = Vector2i(1, 0)
+	if base == Vector2i.ZERO:
+		return base
+	# Spin the key direction by however many 90° steps the camera is rotated, so
+	# the controls stay locked to the screen rather than the world axes.
+	return _rotate_dir(base, _cam_quadrant())
+
+## Current camera rotation in 90° steps (0..3); 0 if no camera is wired.
+func _cam_quadrant() -> int:
+	if view_camera and view_camera.has_method("get_quadrant"):
+		return view_camera.get_quadrant()
+	return 0
+
+## Rotate a grid direction by q quarter-turns about the vertical axis, matching
+## the camera's yaw so movement reads correctly after Q/E rotation.
+func _rotate_dir(v: Vector2i, q: int) -> Vector2i:
+	var r := v
+	for _i in range(((q % 4) + 4) % 4):
+		r = Vector2i(r.y, -r.x)
+	return r
 
 func _begin_segment(dir: Vector2i) -> bool:
 	_push = {}
 	var t := _grid + dir
 	if not _in_bounds(t):
 		return false           # edge of board: don't move
-	# Don't let grid steps phase through solid colliders (e.g. house walls, map
-	# features). Raise the test a little so a full-mesh floor under the cat isn't
-	# treated as a wall — only upright geometry blocks.
-	var lifted := Transform3D(global_transform.basis, global_transform.origin + Vector3.UP * wall_check_lift)
-	if test_move(lifted, _tile_to_world(t) - global_position):
+	# Don't let grid steps phase through solid colliders (house walls, map
+	# features). Uses the same symmetric probe as the pathfinder so they agree.
+	if _tile_blocked(t):
 		return false
 	# Ask World whether the tile is enterable. Returns: false = blocked,
 	# true = free, or {block, from, to} when a block is being pushed.

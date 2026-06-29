@@ -1,0 +1,44 @@
+[gd_scene load_steps=7 format=3 uid="uid://b9livesscene4000"]
+
+[ext_resource type="Script" uid="uid://x03uvgy7onh6" path="res://scripts/world.gd" id="1_world"]
+[ext_resource type="PackedScene" uid="uid://opda3a6ugedf" path="res://scenes/player.tscn" id="2_player"]
+[ext_resource type="Script" uid="uid://dq5y7pmy6pcj3" path="res://scripts/iso_camera.gd" id="3_camera"]
+[ext_resource type="PackedScene" uid="uid://ig8xbmuvawmv" path="res://scenes/pause_menu.tscn" id="4_menu"]
+[ext_resource type="PackedScene" path="res://models/scene4.glb" id="5_map"]
+
+[sub_resource type="Environment" id="Env_s4"]
+background_mode = 1
+background_color = Color(0.45, 0.62, 0.85, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.7, 0.78, 0.85, 1)
+ambient_light_energy = 0.55
+
+[node name="World" type="Node3D"]
+script = ExtResource("1_world")
+grid_size = 30
+generate_terrain = false
+map_path = NodePath("Map")
+block_tiles = Array[Vector2i]([])
+ball_tiles = Array[Vector2i]([])
+
+[node name="Grid" type="Node3D" parent="."]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_s4")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+light_energy = 0.85
+shadow_enabled = true
+
+[node name="Map" parent="." instance=ExtResource("5_map")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.5, 0, 14.5)
+
+[node name="Player" parent="." instance=ExtResource("2_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 15)
+
+[node name="Camera" type="Camera3D" parent="."]
+script = ExtResource("3_camera")
+target_path = NodePath("../Player")
+ortho_size = 8.0
+
+[node name="PauseMenu" parent="." instance=ExtResource("4_menu")]
