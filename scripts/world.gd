@@ -85,6 +85,7 @@ var _defs: Array = []           # [{scene, mask, top}]
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
 var _block_starts: Array = []   # [{block, tile}] for restart
 var _block_bottom := -0.375     # crate's lowest point relative to its origin
+var _block_height := 0.75       # crate height (AABB span), for mounting on top
 var _crate_scene: PackedScene
 
 # --- Goals ---
@@ -121,6 +122,9 @@ func _ready() -> void:
 		_player.ground_y = ground_y
 		_player.height_provider = Callable(self, "get_elevation")
 		_player.block_handler = Callable(self, "can_enter")
+		_player.occupied_provider = Callable(self, "_is_pushable_tile")
+		_player.surface_provider = Callable(self, "surface_elevation")
+		_player.block_provider = Callable(self, "has_block")
 		_player.view_camera = _camera
 		_player.sync_to_grid()
 		_player_start = _player.global_position
@@ -283,6 +287,19 @@ func get_elevation(x: int, z: int) -> float:
 		return e
 	return 0.0
 
+## Standing-surface elevation of a tile, INCLUDING a crate sitting on it, so a
+## jump can land on the crate top. (Balls aren't mountable.) Used by the player
+## for jump resolution; plain walking still uses get_elevation (terrain only).
+func surface_elevation(x: int, z: int) -> float:
+	var e := get_elevation(x, z)
+	if _blocks.has(Vector2i(x, z)):
+		e += _block_height
+	return e
+
+## Is there a pushable crate on this tile? (Lets the player decide to mount it.)
+func has_block(tile: Vector2i) -> bool:
+	return _blocks.has(tile)
+
 # --- Pushable blocks ------------------------------------------------------
 
 func _spawn_blocks() -> void:
@@ -324,11 +341,15 @@ func _measure_block_bottom() -> float:
 	var inst := _make_crate()
 	add_child(inst)
 	var min_y := INF
+	var max_y := -INF
 	for mi in _all_mesh_instances(inst):
 		var m := mi as MeshInstance3D
 		var box: AABB = m.global_transform * m.get_aabb()
 		min_y = minf(min_y, box.position.y)
+		max_y = maxf(max_y, box.position.y + box.size.y)
 	inst.queue_free()
+	if not is_inf(min_y) and not is_inf(max_y):
+		_block_height = max_y - min_y     # crate's full vertical span
 	return -0.375 if is_inf(min_y) else min_y - global_position.y
 
 func _all_mesh_instances(node: Node, acc: Array = []) -> Array:

@@ -32,6 +32,23 @@ extends CharacterBody3D
 ## cat isn't mistaken for a wall (only upright features block).
 @export var wall_check_lift: float = 0.35
 
+## --- Jump (tap Space) ---------------------------------------------------
+## Max height (m) the cat can land UP onto. A ledge/crate taller than this reads
+## as a wall and produces an in-place pop instead of a climb.
+@export var max_jump_up: float = 2.0
+## Seconds for one jump arc (takeoff to landing), independent of distance.
+@export var jump_time: float = 0.32
+## Base apex height (m) of the arc; grows a little with up-delta and span.
+@export var jump_arc_base: float = 0.45
+## Minimum drop (m) for WALKING off a ledge/crate to become a little hop-off
+## (a short arc) instead of a smooth ramp down.
+@export var hop_off_min_height: float = 0.5
+## Apex (m) of a walk-off hop. Kept small so it reads as a gentle hop forward,
+## not a jump straight up.
+@export var hop_off_arc: float = 0.18
+## Seconds after a jump lands before another jump can start (anti-spam).
+@export var jump_cooldown: float = 0.2
+
 # Set by World. Lets WASD follow the camera as it rotates (Q/E) so "up" on
 # screen always walks the cat up-screen, no matter which way the view faces.
 var view_camera: Node = null
@@ -56,6 +73,17 @@ var _walk_name := ""    # seamless looping copy, played while moving
 var _rest_name := ""    # original clip; frame 0 is the rest pose for idle
 var _walking := false
 
+# --- Jump (tap Space) ---
+var _jumping := false
+var _jump_t := 0.0            # 0..1 progress across the current arc
+var _jump_from: Vector3       # world pos at takeoff
+var _jump_to: Vector3         # world pos at landing
+var _jump_apex := 0.0         # parabola height for this arc
+var _jump_target: Vector2i    # tile we'll occupy on landing
+var _jump_cd := 0.0           # cooldown timer; jump allowed only when <= 0
+var _model_base_scale := Vector3.ONE  # rest scale, restored after squash/stretch
+var _squash_tween: Tween
+
 # --- Click-to-move path ---
 var _path: Array = []         # queued tiles to walk to (cardinal-adjacent steps)
 
@@ -70,9 +98,20 @@ var height_provider: Callable
 ## Set by World: called as can_enter(tile, dir) -> bool. Returns false if a block
 ## is in the way and can't be pushed; pushes the block if it can.
 var block_handler: Callable
+## Set by World: is_tile_occupied(tile) -> bool. True if a pushable block or
+## resting ball sits there.
+var occupied_provider: Callable
+## Set by World: surface_elevation(x, z) -> float. Standing surface of a tile
+## INCLUDING a crate on top, so jumps can land on crates. Walking still uses
+## height_provider (terrain only).
+var surface_provider: Callable
+## Set by World: has_block(tile) -> bool. True if a mountable crate is there.
+var block_provider: Callable
 
 func _ready() -> void:
 	_model = $Model
+	if _model:
+		_model_base_scale = _model.scale
 	_setup_animation()
 	sync_to_grid()
 
@@ -106,6 +145,13 @@ func abort() -> void:
 	_tilted_block = null
 	if _tilt_tween and _tilt_tween.is_valid():
 		_tilt_tween.kill()
+	# Cancel any in-flight jump and clear the squash/stretch deformation.
+	_jumping = false
+	_jump_t = 0.0
+	if _squash_tween and _squash_tween.is_valid():
+		_squash_tween.kill()
+	if _model:
+		_model.scale = _model_base_scale
 	sync_to_grid()
 
 func _setup_animation() -> void:
@@ -212,12 +258,24 @@ func _process(delta: float) -> void:
 		_free_move(delta)
 		_update_anim_speed()
 		return
+	# Jump owns the frame while airborne; it resolves to a tile then resumes.
+	if _jumping:
+		_advance_jump(delta)
+		return
+	_jump_cd = maxf(0.0, _jump_cd - delta)
+	# Tap Space to jump (works standing or mid-glide). Gated by the cooldown, and
+	# never mid-push so a crate can't be left half-slid.
+	if Input.is_action_just_pressed("jump") and _jump_cd <= 0.0 and _push.is_empty():
+		_try_jump()
+		if _jumping:
+			return
 	# Manual input cancels any click-to-move path.
 	if _read_dir() != Vector2i.ZERO:
 		_path.clear()
 	var dir := _auto_dir()
 	if not _moving and dir != Vector2i.ZERO:
-		if not _begin_segment(dir):
+		# A big down-step turns into a hop-off jump; don't drop the path for that.
+		if not _begin_segment(dir) and not _jumping:
 			_path.clear()        # path blocked — abandon it
 	if _moving:
 		_advance(delta, dir)
@@ -457,6 +515,12 @@ func _begin_segment(dir: Vector2i) -> bool:
 			_push = res        # we'll drive this block in lockstep
 		elif res is bool and not res:
 			return false       # unpushable block in the way
+	# Walking off a ledge/crate of at least hop_off_min_height becomes a short
+	# hop-off (a jump arc) instead of a ramp down. Never while pushing a crate.
+	if _push.is_empty() and _surface(_grid) - _surface(t) >= hop_off_min_height:
+		_start_jump(t, dir, _grid)
+		_jump_apex = hop_off_arc   # gentle hop forward, not a full jump-up arc
+		return false           # a jump took over; no normal segment started
 	_seg_from = global_position
 	_target_tile = t
 	_seg_len = _seg_from.distance_to(_tile_to_world(t))
@@ -496,6 +560,7 @@ func _advance(delta: float, _dir: Vector2i) -> void:
 		else:
 			_moving = false
 			_speed = 0.0
+			_push = {}             # clear so a stale push can't be re-applied later
 	else:
 		global_position = global_position.move_toward(target_world, step)
 		var prog := 1.0 - global_position.distance_to(target_world) / _seg_len if _seg_len > 0.0 else 1.0
@@ -536,6 +601,145 @@ func _level_out() -> void:
 		return
 	var t := create_tween()
 	t.tween_property(_model, "rotation:x", 0.0, turn_time)
+
+# --- Jump (tap Space) -------------------------------------------------------
+# A jump is a movement segment that targets a tile, with a parabolic Y arc
+# instead of terrain-riding, so the cat always lands cleanly on a tile. The
+# whole resolution is deterministic; see docs/jump_mechanic_spec.md.
+
+## How much lower a tile can be and still count as "level" (a hop) rather than a
+## drop (which makes the jump prefer leaping across to a foothold beyond).
+const _JUMP_LEVEL_BAND := 0.25
+
+## Decide where the jump goes and start it. Direction comes from held keys; with
+## none held, the cat mounts a crate it's facing, otherwise pops in place. Works
+## mid-glide too — it takes off from wherever the cat currently is.
+func _try_jump() -> void:
+	_path.clear()                       # a jump cancels click-to-move
+	# Plan from the tile the cat is physically over right now (rounded), so a
+	# jump while gliding still lands one tile from the cat — not two.
+	var base := _world_to_tile(global_position)
+	var dir := _read_dir()
+	if dir == Vector2i.ZERO:
+		# No steering: auto-mount a crate straight ahead, else pop in place.
+		var ahead := base + _facing
+		if _facing != Vector2i.ZERO and _tile_has_block(ahead) and _can_reach(base, ahead):
+			_start_jump(ahead, _facing, base)
+		else:
+			_start_jump(base, Vector2i.ZERO, base)
+		return
+	_start_jump(_resolve_jump_target(dir, base), dir, base)
+
+## Height-aware target resolution from `base` in `dir`. Returns the tile to land
+## on, or `base` itself when there's no valid forward landing (caller pops).
+func _resolve_jump_target(dir: Vector2i, base: Vector2i) -> Vector2i:
+	var near := base + dir
+	var far := base + dir + dir
+	# A ball can't be landed on — pop in place.
+	if _tile_has_ball(near):
+		return base
+	var near_ok := _tile_landable(near)
+	var far_ok := _tile_landable(far)
+	if near_ok:
+		if not _is_drop(base, near):
+			# Level hop, climb up, or mount a crate — only if within reach.
+			return near if _can_reach(base, near) else base
+		# Near tile is a drop. Prefer leaping ACROSS to a level-or-up foothold
+		# over falling; only drop forward if none exists.
+		if far_ok and not _is_drop(base, far) and _can_reach(base, far):
+			return far
+		return near                      # nothing across → drop forward
+	# Near tile is a solid wall or off-board — don't vault it; pop in place.
+	return base
+
+## Can the cat reach `to`'s surface from `from`? Up no more than max_jump_up;
+## any downward drop is allowed.
+func _can_reach(from: Vector2i, to: Vector2i) -> bool:
+	return _surface(to) - _surface(from) <= max_jump_up
+
+## Is `to` enough lower than `from` to read as a drop rather than a level step?
+func _is_drop(from: Vector2i, to: Vector2i) -> bool:
+	return _surface(to) - _surface(from) < -_JUMP_LEVEL_BAND
+
+## A tile a jump may land on: on-board, no ball. A crate counts as landable
+## (the cat mounts its top); only balls and solid walls are excluded.
+func _tile_landable(tile: Vector2i) -> bool:
+	if not _in_bounds(tile) or _tile_has_ball(tile):
+		return false
+	if _tile_has_block(tile):
+		return true                      # crate: land on top (mount)
+	return not _tile_blocked(tile)
+
+## Is there a mountable crate on this tile?
+func _tile_has_block(tile: Vector2i) -> bool:
+	return block_provider.is_valid() and bool(block_provider.call(tile))
+
+## Occupied by something that isn't a mountable crate → a resting/rolling ball.
+func _tile_has_ball(tile: Vector2i) -> bool:
+	if not (occupied_provider.is_valid() and bool(occupied_provider.call(tile))):
+		return false
+	return not _tile_has_block(tile)
+
+## Standing surface elevation of a tile (crate top if one sits there, else terrain).
+func _surface(tile: Vector2i) -> float:
+	if surface_provider.is_valid():
+		return surface_provider.call(tile.x, tile.y)
+	return _elevation(tile)
+
+## Begin a jump arc from `base` to `target` (target may equal base for a pop).
+func _start_jump(target: Vector2i, dir: Vector2i, base: Vector2i) -> void:
+	_moving = false
+	_speed = 0.0
+	_push = {}
+	_jumping = true
+	_jump_t = 0.0
+	_jump_from = global_position
+	_jump_target = target
+	# Land on the standing surface (crate top when mounting), not just terrain.
+	_jump_to = Vector3(target.x * cell_size, ground_y + _surface(target), target.y * cell_size)
+	var span := absi(target.x - base.x) + absi(target.y - base.y)
+	var up := maxf(0.0, _jump_to.y - _jump_from.y)
+	_jump_apex = jump_arc_base + up * 0.5 + maxf(0.0, float(span) - 1.0) * 0.3
+	if dir != Vector2i.ZERO:
+		_orient(dir, 0.0)               # face the leap; keep the body level
+	_squash_takeoff()
+
+func _advance_jump(delta: float) -> void:
+	_jump_t += delta / maxf(jump_time, 0.0001)
+	var t := clampf(_jump_t, 0.0, 1.0)
+	# X/Z ease linearly; Y is a parabola peaking at t = 0.5.
+	var p := _jump_from.lerp(_jump_to, t)
+	p.y = lerpf(_jump_from.y, _jump_to.y, t) + _jump_apex * 4.0 * t * (1.0 - t)
+	global_position = p
+	if t >= 1.0:
+		_jumping = false
+		_grid = _jump_target
+		_target_tile = _jump_target
+		global_position = _jump_to
+		_jump_cd = jump_cooldown
+		_squash_land()
+
+## Quick stretch leaving the ground, easing back to rest mid-air.
+func _squash_takeoff() -> void:
+	if _model == null:
+		return
+	if _squash_tween and _squash_tween.is_valid():
+		_squash_tween.kill()
+	var b := _model_base_scale
+	_squash_tween = create_tween()
+	_squash_tween.tween_property(_model, "scale", Vector3(b.x * 0.85, b.y * 1.2, b.z * 0.85), jump_time * 0.25).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_squash_tween.tween_property(_model, "scale", b, jump_time * 0.45).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+## Squash-and-recover on touchdown.
+func _squash_land() -> void:
+	if _model == null:
+		return
+	if _squash_tween and _squash_tween.is_valid():
+		_squash_tween.kill()
+	var b := _model_base_scale
+	_squash_tween = create_tween()
+	_squash_tween.tween_property(_model, "scale", Vector3(b.x * 1.18, b.y * 0.78, b.z * 1.18), 0.06).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_squash_tween.tween_property(_model, "scale", b, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _in_bounds(t: Vector2i) -> bool:
 	return t.x >= 0 and t.x < grid_size and t.y >= 0 and t.y < grid_size
