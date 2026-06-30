@@ -49,6 +49,28 @@ extends CharacterBody3D
 ## Seconds after a jump lands before another jump can start (anti-spam).
 @export var jump_cooldown: float = 0.2
 
+## --- Jump-clip timing (used when the model has a "jump" animation) ----------
+## The clip is played at this speed; the cat's arc is slaved to its playback so
+## they stay in sync.
+@export var jump_clip_speed: float = 1.0
+## Frame rate the jump clip was authored at (for the frame numbers below).
+@export var jump_anim_fps: float = 60.0
+## Clip frame where the cat begins drifting forward (still crouching).
+@export var jump_drift_frame: float = 15.0
+## Clip frame where the cat actually leaves the ground.
+@export var jump_takeoff_frame: float = 29.0
+## Clip frame of the apex (highest point). Rise and fall can be asymmetric.
+@export var jump_apex_frame: float = 45.0
+## Clip frame where the cat lands back on the ground (reaches the target tile).
+@export var jump_land_frame: float = 63.0
+## Fraction (0..1) of the horizontal travel covered during the pre-takeoff drift.
+## 0 = no drift; the cat stays put until takeoff, then travels to the target.
+@export var jump_drift_amount: float = 0.0
+## How much higher jumps are slowed so they don't look too fast. 0 = always the
+## same duration; 1 = scale time by ~sqrt(height) (a physical feel). The clip
+## and the arc slow together, so they stay in sync.
+@export_range(0.0, 1.0) var jump_rise_slowdown: float = 0.6
+
 # Set by World. Lets WASD follow the camera as it rotates (Q/E) so "up" on
 # screen always walks the cat up-screen, no matter which way the view faces.
 var view_camera: Node = null
@@ -81,6 +103,11 @@ var _jump_to: Vector3         # world pos at landing
 var _jump_apex := 0.0         # parabola height for this arc
 var _jump_target: Vector2i    # tile we'll occupy on landing
 var _jump_cd := 0.0           # cooldown timer; jump allowed only when <= 0
+var _jump_name := ""          # jump clip in the model, if any (Tier 1 animation)
+var _jump_len := 0.0          # jump clip length (s); drives arc duration when used
+var _jump_dur := 0.0          # duration of the current arc (clip length or jump_time)
+var _jump_speed := 1.0        # clip/arc play speed for this jump (slowed for height)
+var _jump_clip_playing := false  # true while the authored jump clip drives this arc
 var _model_base_scale := Vector3.ONE  # rest scale, restored after squash/stretch
 var _squash_tween: Tween
 
@@ -148,10 +175,18 @@ func abort() -> void:
 	# Cancel any in-flight jump and clear the squash/stretch deformation.
 	_jumping = false
 	_jump_t = 0.0
+	_jump_clip_playing = false
 	if _squash_tween and _squash_tween.is_valid():
 		_squash_tween.kill()
 	if _model:
 		_model.scale = _model_base_scale
+	# Drop back to the rest pose so a half-played jump clip can't freeze on screen.
+	if _anim and _rest_name != "":
+		_anim.speed_scale = walk_anim_speed
+		_anim.play(_rest_name)
+		_anim.seek(0.0, true)
+		_anim.pause()
+	_walking = false
 	sync_to_grid()
 
 func _setup_animation() -> void:
@@ -193,6 +228,16 @@ func _setup_animation() -> void:
 			lib.remove_animation("walk_loop")
 		lib.add_animation("walk_loop", loop_clip)
 		_walk_name = "walk_loop"
+	# Find the jump clip (name contains "jump"). When present it plays during the
+	# arc and replaces the procedural squash; the arc duration follows its length.
+	for n in clips:
+		if n.to_lower().contains("jump"):
+			_jump_name = n
+			var jclip := _anim.get_animation(n)
+			if jclip:
+				_jump_len = jclip.length
+				jclip.loop_mode = Animation.LOOP_NONE   # play once, don't loop
+			break
 	# Start idle on the rest pose.
 	_anim.play(_rest_name)
 	_anim.seek(0.0, true)
@@ -518,7 +563,7 @@ func _begin_segment(dir: Vector2i) -> bool:
 	# Walking off a ledge/crate of at least hop_off_min_height becomes a short
 	# hop-off (a jump arc) instead of a ramp down. Never while pushing a crate.
 	if _push.is_empty() and _surface(_grid) - _surface(t) >= hop_off_min_height:
-		_start_jump(t, dir, _grid)
+		_start_jump(t, dir, _grid, true)   # hop = no big jump clip
 		_jump_apex = hop_off_arc   # gentle hop forward, not a full jump-up arc
 		return false           # a jump took over; no normal segment started
 	_seg_from = global_position
@@ -687,7 +732,8 @@ func _surface(tile: Vector2i) -> float:
 	return _elevation(tile)
 
 ## Begin a jump arc from `base` to `target` (target may equal base for a pop).
-func _start_jump(target: Vector2i, dir: Vector2i, base: Vector2i) -> void:
+## `hop` marks a small walk-off hop, which never plays the big jump clip.
+func _start_jump(target: Vector2i, dir: Vector2i, base: Vector2i, hop := false) -> void:
 	_moving = false
 	_speed = 0.0
 	_push = {}
@@ -702,22 +748,96 @@ func _start_jump(target: Vector2i, dir: Vector2i, base: Vector2i) -> void:
 	_jump_apex = jump_arc_base + up * 0.5 + maxf(0.0, float(span) - 1.0) * 0.3
 	if dir != Vector2i.ZERO:
 		_orient(dir, 0.0)               # face the leap; keep the body level
-	_squash_takeoff()
+	# Higher arcs take proportionally longer so they don't look too fast. Scale by
+	# ~sqrt of how high the arc climbs vs a baseline hop (1.0 = no extra height).
+	var peak_rise := maxf(_jump_to.y - _jump_from.y, 0.0) + _jump_apex
+	var slow := sqrt(maxf(peak_rise, 0.01) / maxf(jump_arc_base, 0.01))
+	slow = lerpf(1.0, slow, jump_rise_slowdown)
+	# Full jump plays the authored clip (if any); a hop or a clipless model uses
+	# the procedural squash. Both the clip and the arc run at _jump_speed.
+	if not hop and _jump_name != "" and _anim:
+		_jump_clip_playing = true
+		_jump_speed = jump_clip_speed / maxf(slow, 0.0001)
+		_anim.speed_scale = _jump_speed
+		_anim.play(_jump_name)
+	else:
+		_jump_dur = jump_time * slow
+		_jump_speed = 1.0
+		_jump_clip_playing = false
+		_squash_takeoff()
 
 func _advance_jump(delta: float) -> void:
-	_jump_t += delta / maxf(jump_time, 0.0001)
+	if _jump_clip_playing:
+		_advance_jump_clip(delta)
+		return
+	# Procedural / hop-off path: a simple timer-driven parabola.
+	_jump_t += delta / maxf(_jump_dur, 0.0001)
 	var t := clampf(_jump_t, 0.0, 1.0)
-	# X/Z ease linearly; Y is a parabola peaking at t = 0.5.
-	var p := _jump_from.lerp(_jump_to, t)
+	var p := _jump_from.lerp(_jump_to, t)   # X/Z ease linearly
 	p.y = lerpf(_jump_from.y, _jump_to.y, t) + _jump_apex * 4.0 * t * (1.0 - t)
 	global_position = p
 	if t >= 1.0:
-		_jumping = false
-		_grid = _jump_target
-		_target_tile = _jump_target
-		global_position = _jump_to
-		_jump_cd = jump_cooldown
-		_squash_land()
+		_finish_jump()
+
+## Arc slaved to clip time (kept on our own clock so it can't stutter): hold
+## during the crouch, drift forward from `jump_drift_frame`, leave the ground at
+## `jump_takeoff_frame`, peak at `jump_apex_frame`, land at `jump_land_frame`.
+## Recovery frames after landing play in place on the target tile.
+func _advance_jump_clip(delta: float) -> void:
+	_jump_t += delta * _jump_speed                 # advance in CLIP seconds
+	var pos := _jump_t
+	var t_drift := jump_drift_frame / jump_anim_fps
+	var t_lift := jump_takeoff_frame / jump_anim_fps
+	var t_apex := jump_apex_frame / jump_anim_fps
+	var t_land := jump_land_frame / jump_anim_fps
+	# Horizontal: still through the crouch, a slight drift, then the main travel.
+	var hx := 0.0
+	if pos <= t_drift:
+		hx = 0.0
+	elif pos < t_lift:
+		hx = jump_drift_amount * (pos - t_drift) / maxf(t_lift - t_drift, 0.0001)
+	elif pos < t_land:
+		var a := (pos - t_lift) / maxf(t_land - t_lift, 0.0001)
+		hx = jump_drift_amount + (1.0 - jump_drift_amount) * a
+	else:
+		hx = 1.0
+	var p := _jump_from.lerp(_jump_to, hx)
+	# Vertical: flat until takeoff, then an asymmetric arc peaking at t_apex
+	# (ease-out up, ease-in down — zero vertical speed at the peak), then target.
+	var y_peak := maxf(_jump_from.y, _jump_to.y) + _jump_apex
+	if pos < t_lift:
+		p.y = _jump_from.y
+	elif pos < t_apex:
+		var r := (pos - t_lift) / maxf(t_apex - t_lift, 0.0001)   # 0..1 rising
+		p.y = _jump_from.y + (y_peak - _jump_from.y) * (1.0 - (1.0 - r) * (1.0 - r))
+	elif pos < t_land:
+		var f := (pos - t_apex) / maxf(t_land - t_apex, 0.0001)   # 0..1 falling
+		p.y = y_peak + (_jump_to.y - y_peak) * (f * f)
+	else:
+		p.y = _jump_to.y
+	global_position = p
+	# Jump ends when the whole clip (incl. recovery) has played out.
+	if pos >= _jump_len:
+		_finish_jump()
+
+## Land the jump: snap to the target tile, start the cooldown, hand the
+## animation state machine back so we don't freeze on the clip's last frame.
+func _finish_jump() -> void:
+	_jumping = false
+	_grid = _jump_target
+	_target_tile = _jump_target
+	global_position = _jump_to
+	_jump_cd = jump_cooldown
+	if _jump_clip_playing:
+		if _anim and _rest_name != "":
+			_anim.speed_scale = walk_anim_speed
+			_anim.play(_rest_name)
+			_anim.seek(0.0, true)
+			_anim.pause()
+		_walking = false
+	else:
+		_squash_land()                  # procedural fallback / hop-off
+	_jump_clip_playing = false
 
 ## Quick stretch leaving the ground, easing back to rest mid-air.
 func _squash_takeoff() -> void:
