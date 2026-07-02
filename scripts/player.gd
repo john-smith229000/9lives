@@ -324,6 +324,10 @@ func _process(delta: float) -> void:
 	if not _moving and dir != Vector2i.ZERO:
 		# A big down-step turns into a hop-off jump; don't drop the path for that.
 		if not _begin_segment(dir) and not _jumping:
+			# Blocked (wall / hole / board edge): can't step there, but still turn
+			# in place to face it, so the player can aim a jump that way.
+			if dir != _facing:
+				_orient(dir, 0.0)
 			_path.clear()        # path blocked — abandon it
 	if _moving:
 		_advance(delta, dir)
