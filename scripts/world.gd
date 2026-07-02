@@ -31,6 +31,12 @@ const BIT_S := 8   # +Z
 ## and trimesh collision is generated for them so the cat routes around them.
 @export var buildings_path: NodePath
 
+## Spawn one background NPC that walks back and forth along a clear lane (found
+## automatically so it never starts in, or walks into, a building).
+@export var npc_enabled: bool = false
+## NPC walk speed (m/s), passed to the spawned NPC.
+@export var npc_walk_speed: float = 1.6
+
 @export_group("Terrain")
 @export var height_gradient: float = 0.1
 @export var noise_amplitude: float = 0.6
@@ -72,6 +78,10 @@ const BIT_S := 8   # +Z
 @export var keyhole_clear_radius: float = 0.14
 
 const _KEYHOLE_SHADER: Shader = preload("res://shaders/keyhole.gdshader")
+const _NPC_SCENE: PackedScene = preload("res://scenes/npc.tscn")
+var _npc_spawned := false
+var _npc_walk_set: Dictionary = {}   # Vector2i -> true, tiles the NPC may stand on
+var _npc_walk_list: Array[Vector2i] = []   # same tiles, for random picks
 # One entry per building mesh: {node, mats:[ShaderMaterial], aabb:AABB, active:float}.
 # `active` eases toward 1 while the building sits between the camera and the cat.
 var _keyhole_buildings: Array = []
@@ -539,6 +549,94 @@ func _ensure_obstacles() -> void:
 			if _player.is_tile_blocked(Vector2i(x, z)):
 				_obstacle[Vector2i(x, z)] = true
 
+# --- Background NPC -------------------------------------------------------
+
+## Spawn one roaming NPC. Deferred until physics is ready (obstacle probe + floor
+## rays need the space state), so this is polled from _process until it succeeds.
+func _try_spawn_npc() -> void:
+	if get_world_3d().direct_space_state == null:
+		return                                # physics not ready — retry next frame
+	_ensure_obstacles()
+	if not _obstacle_built:
+		return
+	_build_npc_walkable()
+	if _npc_walk_list.is_empty():
+		_npc_spawned = true                   # nowhere to walk; don't retry
+		push_warning("World: no walkable tiles found for the NPC.")
+		return
+	var start: Vector2i = _npc_walk_list[randi() % _npc_walk_list.size()]
+	var npc := _NPC_SCENE.instantiate()
+	add_child(npc)
+	npc.setup_roam(self, start, cell_size, ground_y, npc_walk_speed)
+	_npc_spawned = true
+
+## World position for the NPC to stand on a tile (matches the cat's ride height).
+func _npc_world(tile: Vector2i) -> Vector3:
+	return Vector3(tile.x * cell_size, ground_y, tile.y * cell_size)
+
+## A tile the NPC may stand on: not a static obstacle (building/wall) AND with
+## floor beneath it (so it never wanders onto an off-map edge).
+func _npc_walkable(tile: Vector2i) -> bool:
+	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+		return false
+	if _obstacle.has(tile):
+		return false
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return false
+	var w := Vector3(tile.x * cell_size, 0.0, tile.y * cell_size)
+	var params := PhysicsRayQueryParameters3D.create(
+		Vector3(w.x, ground_y + 5.0, w.z), Vector3(w.x, ground_y - 2.0, w.z))
+	return not space.intersect_ray(params).is_empty()
+
+## Build the set/list of tiles the NPC may stand on (once), so roaming and its
+## pathfinding are cheap lookups instead of per-tile raycasts.
+func _build_npc_walkable() -> void:
+	_npc_walk_set.clear()
+	_npc_walk_list.clear()
+	for x in grid_size:
+		for z in grid_size:
+			var t := Vector2i(x, z)
+			if _npc_walkable(t):
+				_npc_walk_set[t] = true
+				_npc_walk_list.append(t)
+
+## A random tile the NPC can stand on (for picking roam destinations).
+func npc_random_tile() -> Vector2i:
+	if _npc_walk_list.is_empty():
+		return Vector2i(-1, -1)
+	return _npc_walk_list[randi() % _npc_walk_list.size()]
+
+## BFS over NPC-walkable tiles (routes around buildings and off-map gaps).
+## Returns tiles from the first step to goal (cardinal-adjacent), or [] if
+## unreachable. Used by the roaming NPC.
+func npc_find_path(start: Vector2i, goal: Vector2i) -> Array:
+	if start == goal or not _npc_walk_set.has(goal):
+		return []
+	var came := {start: start}
+	var queue: Array[Vector2i] = [start]
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var found := false
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_front()
+		if cur == goal:
+			found = true
+			break
+		for d in dirs:
+			var n: Vector2i = cur + d
+			if came.has(n) or not _npc_walk_set.has(n):
+				continue
+			came[n] = cur
+			queue.append(n)
+	if not found:
+		return []
+	var path: Array = []
+	var c := goal
+	while c != start:
+		path.push_front(c)
+		c = came[c]
+	return path
+
 ## Called by the player: can it step onto `tile` moving in `dir`?
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
 ## being pushed — the player then slides that block in lockstep with itself.
@@ -629,6 +727,8 @@ func _process(delta: float) -> void:
 	_update_crate_heights(delta)
 	_update_balls(delta)
 	_update_keyhole(delta)
+	if npc_enabled and not _npc_spawned:
+		_try_spawn_npc()
 
 # --- Keyhole see-through --------------------------------------------------
 

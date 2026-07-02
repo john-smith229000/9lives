@@ -52,17 +52,17 @@ extends CharacterBody3D
 ## --- Jump-clip timing (used when the model has a "jump" animation) ----------
 ## The clip is played at this speed; the cat's arc is slaved to its playback so
 ## they stay in sync.
-@export var jump_clip_speed: float = 1.0
+@export var jump_clip_speed: float = 1.2
 ## Frame rate the jump clip was authored at (for the frame numbers below).
 @export var jump_anim_fps: float = 60.0
 ## Clip frame where the cat begins drifting forward (still crouching).
-@export var jump_drift_frame: float = 15.0
+@export var jump_drift_frame: float = 12.0
 ## Clip frame where the cat actually leaves the ground.
-@export var jump_takeoff_frame: float = 29.0
+@export var jump_takeoff_frame: float = 20.0
 ## Clip frame of the apex (highest point). Rise and fall can be asymmetric.
 @export var jump_apex_frame: float = 45.0
 ## Clip frame where the cat lands back on the ground (reaches the target tile).
-@export var jump_land_frame: float = 63.0
+@export var jump_land_frame: float = 57.0
 ## Fraction (0..1) of the horizontal travel covered during the pre-takeoff drift.
 ## 0 = no drift; the cat stays put until takeoff, then travels to the target.
 @export var jump_drift_amount: float = 0.0

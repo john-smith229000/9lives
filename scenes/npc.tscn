@@ -1,0 +1,12 @@
+[gd_scene load_steps=3 format=3 uid="uid://b8n1pcw0npc31"]
+
+[ext_resource type="Script" path="res://scripts/npc.gd" id="1_npc"]
+[ext_resource type="PackedScene" path="res://models/npc1.glb" id="2_npcmodel"]
+
+[node name="Npc" type="Node3D"]
+script = ExtResource("1_npc")
+
+[node name="Model" type="Node3D" parent="."]
+
+[node name="NpcModel" parent="Model" instance=ExtResource("2_npcmodel")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)

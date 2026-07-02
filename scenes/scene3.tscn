@@ -19,6 +19,7 @@ script = ExtResource("1_world")
 generate_terrain = false
 map_path = NodePath("Map")
 buildings_path = NodePath("Buildings")
+npc_enabled = true
 block_tiles = Array[Vector2i]([])
 ball_tiles = Array[Vector2i]([])
 
