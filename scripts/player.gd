@@ -134,6 +134,9 @@ var occupied_provider: Callable
 var surface_provider: Callable
 ## Set by World: has_block(tile) -> bool. True if a mountable crate is there.
 var block_provider: Callable
+## Set by World: has_hole(tile) -> bool. True if a hole is there (can't be walked
+## onto or landed on — only jumped over to the tile beyond).
+var hole_provider: Callable
 
 func _ready() -> void:
 	_model = $Model
@@ -656,22 +659,18 @@ func _level_out() -> void:
 ## drop (which makes the jump prefer leaping across to a foothold beyond).
 const _JUMP_LEVEL_BAND := 0.25
 
-## Decide where the jump goes and start it. Direction comes from held keys; with
-## none held, the cat mounts a crate it's facing, otherwise pops in place. Works
+## Decide where the jump goes and start it. The cat always jumps toward the tile
+## it is FACING (held movement keys are no longer used for jumps): it hops onto
+## that tile, mounts a crate there, or clears a hole to the tile beyond. Works
 ## mid-glide too — it takes off from wherever the cat currently is.
 func _try_jump() -> void:
 	_path.clear()                       # a jump cancels click-to-move
 	# Plan from the tile the cat is physically over right now (rounded), so a
 	# jump while gliding still lands one tile from the cat — not two.
 	var base := _world_to_tile(global_position)
-	var dir := _read_dir()
+	var dir := _facing
 	if dir == Vector2i.ZERO:
-		# No steering: auto-mount a crate straight ahead, else pop in place.
-		var ahead := base + _facing
-		if _facing != Vector2i.ZERO and _tile_has_block(ahead) and _can_reach(base, ahead):
-			_start_jump(ahead, _facing, base)
-		else:
-			_start_jump(base, Vector2i.ZERO, base)
+		_start_jump(base, Vector2i.ZERO, base)   # not facing anywhere yet → pop
 		return
 	_start_jump(_resolve_jump_target(dir, base), dir, base)
 
@@ -680,6 +679,11 @@ func _try_jump() -> void:
 func _resolve_jump_target(dir: Vector2i, base: Vector2i) -> Vector2i:
 	var near := base + dir
 	var far := base + dir + dir
+	# A hole ahead: clear it to the tile beyond, if that's a valid landing.
+	if _tile_has_hole(near):
+		if _tile_landable(far) and _can_reach(base, far):
+			return far
+		return base                      # can't clear it — pop in place
 	# A ball can't be landed on — pop in place.
 	if _tile_has_ball(near):
 		return base
@@ -709,11 +713,15 @@ func _is_drop(from: Vector2i, to: Vector2i) -> bool:
 ## A tile a jump may land on: on-board, no ball. A crate counts as landable
 ## (the cat mounts its top); only balls and solid walls are excluded.
 func _tile_landable(tile: Vector2i) -> bool:
-	if not _in_bounds(tile) or _tile_has_ball(tile):
+	if not _in_bounds(tile) or _tile_has_ball(tile) or _tile_has_hole(tile):
 		return false
 	if _tile_has_block(tile):
 		return true                      # crate: land on top (mount)
 	return not _tile_blocked(tile)
+
+## Is there a hole on this tile? (Can't land here — only clear it.)
+func _tile_has_hole(tile: Vector2i) -> bool:
+	return hole_provider.is_valid() and bool(hole_provider.call(tile))
 
 ## Is there a mountable crate on this tile?
 func _tile_has_block(tile: Vector2i) -> bool:

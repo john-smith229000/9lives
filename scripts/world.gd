@@ -48,6 +48,11 @@ const BIT_S := 8   # +Z
 ## Tiles (grid x, z) that start with a pushable block on them.
 @export var block_tiles: Array[Vector2i] = [Vector2i(12, 10)]
 
+@export_group("Holes")
+## Tiles (grid x, z) that hold a hole: the cat can't walk onto them, only jump
+## over them to the tile beyond. The hole mesh's top sits at the lowest tile top.
+@export var hole_tiles: Array[Vector2i] = []
+
 @export_group("Rolling Balls")
 ## Tiles (grid x, z) that start with a rollable ball on them.
 @export var ball_tiles: Array[Vector2i] = [Vector2i(7, 10)]
@@ -93,6 +98,7 @@ var _heights: Array = []
 var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
+var _holes: Dictionary = {}     # Vector2i(tile) -> hole Node3D (jump-over gaps)
 var _block_starts: Array = []   # [{block, tile}] for restart
 var _block_bottom := -0.375     # crate's lowest point relative to its origin
 var _block_height := 0.75       # crate height (AABB span), for mounting on top
@@ -126,6 +132,7 @@ func _ready() -> void:
 	_spawn_blocks()
 	_spawn_goal()
 	_spawn_balls()
+	_spawn_holes()
 	if _player:
 		_player.grid_size = grid_size
 		_player.cell_size = cell_size
@@ -135,6 +142,7 @@ func _ready() -> void:
 		_player.occupied_provider = Callable(self, "_is_pushable_tile")
 		_player.surface_provider = Callable(self, "surface_elevation")
 		_player.block_provider = Callable(self, "has_block")
+		_player.hole_provider = Callable(self, "has_hole")
 		_player.view_camera = _camera
 		_player.sync_to_grid()
 		_player_start = _player.global_position
@@ -202,6 +210,8 @@ func _build_grid() -> void:
 	if generate_terrain:
 		for x in grid_size:
 			for z in grid_size:
+				if Vector2i(x, z) in hole_tiles:
+					continue          # the hole mesh replaces the ground cube here
 				_place_tile(x, z)
 
 func _place_tile(x: int, z: int) -> void:
@@ -309,6 +319,38 @@ func surface_elevation(x: int, z: int) -> float:
 ## Is there a pushable crate on this tile? (Lets the player decide to mount it.)
 func has_block(tile: Vector2i) -> bool:
 	return _blocks.has(tile)
+
+# --- Holes (jump-over gaps) -----------------------------------------------
+
+## Place the hole mesh on each hole tile. The model is authored with its top at
+## +0.5 (a tile top), so we sit it at the lowest tile elevation — its top then
+## lines up with the lowest 1 m cube tops and it drops into a pit below.
+func _spawn_holes() -> void:
+	if hole_tiles.is_empty():
+		return
+	var scene: PackedScene = load("res://models/hole.glb")
+	if scene == null:
+		push_warning("World: could not load hole.glb")
+		return
+	var min_elev := INF
+	for x in grid_size:
+		for z in grid_size:
+			min_elev = minf(min_elev, float(_heights[x][z]))
+	if is_inf(min_elev):
+		min_elev = 0.0
+	for tile in hole_tiles:
+		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+			continue
+		if _holes.has(tile):
+			continue
+		var node := scene.instantiate() as Node3D
+		node.position = Vector3(tile.x * cell_size, min_elev, tile.y * cell_size)
+		_grid_root.add_child(node)
+		_holes[tile] = node
+
+## Is there a hole on this tile? The cat can't walk onto it, only jump over it.
+func has_hole(tile: Vector2i) -> bool:
+	return _holes.has(tile)
 
 # --- Pushable blocks ------------------------------------------------------
 
@@ -526,7 +568,7 @@ func find_path(start: Vector2i, goal: Vector2i) -> Array:
 func _path_walkable(tile: Vector2i) -> bool:
 	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 		return false
-	if _blocks.has(tile):
+	if _blocks.has(tile) or _holes.has(tile):
 		return false
 	for ball in _balls:
 		if ball["resting"] and ball["tile"] == tile:
@@ -641,6 +683,9 @@ func npc_find_path(start: Vector2i, goal: Vector2i) -> Array:
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
 ## being pushed — the player then slides that block in lockstep with itself.
 func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
+	# A hole can't be walked onto (only jumped over).
+	if _holes.has(tile):
+		return false
 	# A ball (rolling or resting): (re)shove it and step into the tile it vacates.
 	# If it can't move (obstacle right behind it), the cat is blocked too.
 	var ball := _ball_at(tile)
