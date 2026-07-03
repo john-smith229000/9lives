@@ -80,6 +80,38 @@ const BIT_S := 8   # +Z
 ## plop fluid instead of snapping to the surface.
 @export var water_settle_rate: float = 5.0
 
+@export_group("Grass")
+## Grow grass automatically wherever the map's painted colour matches (instead of
+## listing tiles by hand). Samples the map's texture per tile.
+@export var grass_from_paint: bool = false
+## The painted colour that means "grass here".
+@export var grass_paint_color: Color = Color("6a9b47")
+## How close a tile's colour must be to count (0 = exact; raise if grass is
+## missing, lower if it grows in the wrong places).
+@export var grass_color_tolerance: float = 0.18
+## Flip V when sampling the map texture (toggle if grass lands mirrored).
+@export var grass_uv_flip_v: bool = false
+## Tiles (grid x, z) that get grass — used only when grass_from_paint is off.
+@export var grass_tiles: Array[Vector2i] = []
+## Tufts scattered per grass tile.
+@export var grass_per_tile: int = 100
+## How far each tuft wanders within its slot on the tile (0 = perfect grid,
+## 1 = can reach the slot edges). Keeps coverage even instead of clumpy.
+@export var grass_jitter: float = 0.8
+## Overall size multiplier on the model's native size (lower this if the tuft
+## imported bigger than you want; 1.0 = original size).
+@export var grass_scale: float = 0.14
+## Grass colour (the tips; roots are a touch darker).
+@export var grass_color: Color = Color("6a9b47")
+## Wind tip-sway distance (m) and speed.
+@export var grass_wind_strength: float = 0.12
+@export var grass_wind_speed: float = 1.5
+## How far flattened blades push over.
+@export var grass_bend_strength: float = 1.8
+## Seconds a flattened blade takes to spring back upright after the cat leaves.
+## Each blade fades on its own timer, so higher = a longer-lingering wake.
+@export var grass_recovery: float = 2.5
+
 @export_group("Hints")
 ## Spotlight the first ball at level start (outline + camera pan) until it's
 ## shoved for the first time.
@@ -173,6 +205,16 @@ var _ball_radius := 0.375
 var _hint_ball_node: Node3D = null
 var _hint_cam_timer := 0.0
 
+# --- Grass ---
+var _grass_mats: Array[ShaderMaterial] = []   # one per blade mesh
+var _grass_mms: Array = []                    # the MultiMeshes (for writing per-blade custom data)
+# Per-blade bookkeeping (indexed by a global blade id).
+var _grass_blade_mm: PackedInt32Array = PackedInt32Array()   # which MultiMesh
+var _grass_blade_idx: PackedInt32Array = PackedInt32Array()  # instance index inside it
+var _grass_blade_pos: PackedVector3Array = PackedVector3Array()
+var _grass_bins: Dictionary = {}              # tile -> Array of blade ids near it
+var _grass_active: Dictionary = {}            # blade id -> Vector3(bend, dir.x, dir.z) for blades still recovering
+
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
 @onready var _sun: DirectionalLight3D = $Sun
@@ -197,6 +239,7 @@ func _ready() -> void:
 	_spawn_balls()
 	_spawn_holes()
 	_spawn_water()
+	_spawn_grass()
 	if _player:
 		_player.grid_size = grid_size
 		_player.cell_size = cell_size
@@ -467,6 +510,206 @@ func _spawn_water() -> void:
 ## Is there water on this tile? The cat can't walk onto or land on it.
 func has_water(tile: Vector2i) -> bool:
 	return _water.has(tile)
+
+# --- Grass (wind-swaying blades) ------------------------------------------
+
+## Scatter single grass blades (models/blade1.glb .. blade5.glb, one picked at
+## random per blade) over the grass tiles, driven by the wind shader. A MultiMesh
+## holds a single mesh, so there's one MultiMesh per blade variant. Blade height
+## is measured from each model, so it isn't set by hand.
+func _spawn_grass() -> void:
+	var tiles: Array[Vector2i] = _grass_tiles_from_paint() if grass_from_paint else grass_tiles
+	if tiles.is_empty():
+		return
+	var meshes := _blade_meshes()
+	if meshes.is_empty():
+		push_warning("World: no blade meshes (models/blade1.glb ...) found — no grass.")
+		return
+	var rng := RandomNumberGenerator.new()
+	# One transform list per blade variant.
+	var lists: Array = []
+	for _m in meshes:
+		lists.append([])
+	for tile in tiles:
+		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+			continue
+		var top := get_elevation(tile.x, tile.y) + 0.5
+		# Stratified placement: one blade per cell of a sub-grid across the tile
+		# (with jitter), so coverage is even instead of randomly clumped.
+		var cols := maxi(int(ceil(sqrt(float(grass_per_tile)))), 1)
+		var sub := cell_size / float(cols)
+		var origin_x := tile.x * cell_size - cell_size * 0.5
+		var origin_z := tile.y * cell_size - cell_size * 0.5
+		for i in grass_per_tile:
+			var cx := origin_x + (float(i % cols) + 0.5) * sub
+			var cz := origin_z + (float(i / cols) + 0.5) * sub
+			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
+			t = t.scaled(Vector3.ONE * (grass_scale * rng.randf_range(0.9, 1.1)))
+			t.origin = Vector3(
+				cx + rng.randf_range(-0.5, 0.5) * sub * grass_jitter,
+				top,
+				cz + rng.randf_range(-0.5, 0.5) * sub * grass_jitter)
+			(lists[rng.randi() % meshes.size()] as Array).append(t)
+	_grass_mats.clear()
+	_grass_mms.clear()
+	_grass_blade_mm = PackedInt32Array()
+	_grass_blade_idx = PackedInt32Array()
+	_grass_blade_pos = PackedVector3Array()
+	_grass_bins.clear()
+	_grass_active.clear()
+	for k in meshes.size():
+		var xforms: Array = lists[k]
+		if xforms.is_empty():
+			continue
+		var mesh: Mesh = meshes[k]
+		var blade_h: float = maxf(mesh.get_aabb().size.y, 0.01)
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_custom_data = true     # per-blade bend amount + push direction
+		mm.mesh = mesh
+		mm.instance_count = xforms.size()
+		var mm_index := _grass_mms.size()
+		for i in xforms.size():
+			var xf: Transform3D = xforms[i]
+			mm.set_instance_transform(i, xf)
+			mm.set_instance_custom_data(i, Color(0, 0, 0, 0))   # start un-bent
+			# Record this blade so we can stamp it when the cat walks near.
+			var gid := _grass_blade_mm.size()
+			_grass_blade_mm.append(mm_index)
+			_grass_blade_idx.append(i)
+			_grass_blade_pos.append(xf.origin)
+			var btile := Vector2i(roundi(xf.origin.x / cell_size), roundi(xf.origin.z / cell_size))
+			var bin: Array = _grass_bins.get(btile, [])
+			bin.append(gid)
+			_grass_bins[btile] = bin
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		var mat := _grass_material(blade_h)
+		mmi.material_override = mat
+		_grass_mats.append(mat)
+		_grass_mms.append(mm)
+		_grid_root.add_child(mmi)
+
+## The mesh from each of models/blade1.glb .. blade5.glb that exists.
+func _blade_meshes() -> Array:
+	var out: Array = []
+	for i in range(1, 6):
+		var path := "res://models/blade%d.glb" % i
+		if not ResourceLoader.exists(path):
+			continue
+		var scene := load(path) as PackedScene
+		if scene == null:
+			continue
+		var inst := scene.instantiate()
+		for mi in _all_mesh_instances(inst):
+			out.append((mi as MeshInstance3D).mesh)
+			break
+		inst.queue_free()
+	return out
+
+func _grass_material(blade_h: float) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = preload("res://shaders/grass_wind.gdshader")
+	m.set_shader_parameter("blade_height", blade_h)
+	m.set_shader_parameter("tip_color", grass_color)
+	m.set_shader_parameter("base_color", grass_color.darkened(0.28))
+	m.set_shader_parameter("wind_strength", grass_wind_strength)
+	m.set_shader_parameter("wind_speed", grass_wind_speed)
+	m.set_shader_parameter("bend_strength", grass_bend_strength)
+	return m
+
+## Which tiles are painted the grass colour on the map's texture. For each tile
+## centre we find the map triangle under it, read its UV, sample the texture, and
+## keep the tile if the colour is close to grass_paint_color.
+func _grass_tiles_from_paint() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var map := get_node_or_null(map_path)
+	if map == null:
+		push_warning("World: grass_from_paint needs a map_path.")
+		return out
+	var mi: MeshInstance3D = null
+	for m in _all_mesh_instances(map):
+		mi = m
+		break
+	if mi == null or mi.mesh == null:
+		return out
+	var img := _albedo_image(mi)
+	if img == null:
+		push_warning("World: map material has no readable albedo texture for grass_from_paint.")
+		return out
+	var mesh: Mesh = mi.mesh
+	var arr: Array = mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	if verts.is_empty() or uvs.is_empty():
+		push_warning("World: map mesh has no UVs; can't sample paint for grass.")
+		return out
+	var xf: Transform3D = mi.global_transform
+	# Precompute each vertex's world XZ (the plane we test tile centres against).
+	var wxz := PackedVector2Array()
+	wxz.resize(verts.size())
+	for vi in verts.size():
+		var wp: Vector3 = xf * verts[vi]
+		wxz[vi] = Vector2(wp.x, wp.z)
+	var tri_n: int = (idx.size() / 3) if idx.size() > 0 else (verts.size() / 3)
+	var iw := float(img.get_width())
+	var ih := float(img.get_height())
+	for x in grid_size:
+		for z in grid_size:
+			var uv := _uv_at_point(Vector2(x * cell_size, z * cell_size), wxz, uvs, idx, tri_n)
+			if uv.x < -0.5:
+				continue
+			var u := clampf(uv.x, 0.0, 1.0)
+			var v := clampf(uv.y, 0.0, 1.0)
+			if grass_uv_flip_v:
+				v = 1.0 - v
+			var px := clampi(int(u * (iw - 1.0)), 0, img.get_width() - 1)
+			var py := clampi(int(v * (ih - 1.0)), 0, img.get_height() - 1)
+			if _color_close(img.get_pixel(px, py), grass_paint_color, grass_color_tolerance):
+				out.append(Vector2i(x, z))
+	return out
+
+## Barycentric UV of point p (world XZ) inside the first map triangle containing
+## it; returns (-1,-1) if no triangle covers it.
+func _uv_at_point(p: Vector2, wxz: PackedVector2Array, uvs: PackedVector2Array, idx: PackedInt32Array, tri_n: int) -> Vector2:
+	for ti in tri_n:
+		var i0: int
+		var i1: int
+		var i2: int
+		if idx.size() > 0:
+			i0 = idx[ti * 3]; i1 = idx[ti * 3 + 1]; i2 = idx[ti * 3 + 2]
+		else:
+			i0 = ti * 3; i1 = ti * 3 + 1; i2 = ti * 3 + 2
+		var a := wxz[i0]
+		var b := wxz[i1]
+		var c := wxz[i2]
+		if p.x < minf(a.x, minf(b.x, c.x)) - 0.001 or p.x > maxf(a.x, maxf(b.x, c.x)) + 0.001:
+			continue
+		if p.y < minf(a.y, minf(b.y, c.y)) - 0.001 or p.y > maxf(a.y, maxf(b.y, c.y)) + 0.001:
+			continue
+		var d := (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
+		if absf(d) < 0.0000001:
+			continue
+		var w0 := ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / d
+		var w1 := ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / d
+		var w2 := 1.0 - w0 - w1
+		if w0 >= -0.01 and w1 >= -0.01 and w2 >= -0.01:
+			return uvs[i0] * w0 + uvs[i1] * w1 + uvs[i2] * w2
+	return Vector2(-1.0, -1.0)
+
+func _color_close(a: Color, b: Color, tol: float) -> bool:
+	return absf(a.r - b.r) <= tol and absf(a.g - b.g) <= tol and absf(a.b - b.b) <= tol
+
+func _albedo_image(mi: MeshInstance3D) -> Image:
+	var mat := mi.get_active_material(0)
+	if mat is BaseMaterial3D and (mat as BaseMaterial3D).albedo_texture:
+		var img: Image = (mat as BaseMaterial3D).albedo_texture.get_image()
+		if img:
+			if img.is_compressed():
+				img.decompress()
+			return img
+	return null
 
 # --- Pushable blocks ------------------------------------------------------
 
@@ -975,6 +1218,46 @@ func _process(delta: float) -> void:
 			_camera.release_focus()
 	if day_night_enabled and Input.is_action_just_pressed("cycle_time"):
 		_advance_day()
+	if not _grass_active.is_empty() or (not _grass_bins.is_empty() and _player):
+		_update_grass(delta)
+
+## Per-blade grass wake: fade any flattened blades on their own timer, then stamp
+## the grass on the tile the cat is standing on. Only tiles the cat actually steps
+## on flatten, and each recovers independently — so walking leaves a settling
+## trail of footprints, with no radius/sphere and no travelling wave.
+func _update_grass(delta: float) -> void:
+	var fade := delta / maxf(grass_recovery, 0.05)
+	# 1) Fade every still-recovering blade toward upright.
+	var dead: Array = []
+	for gid in _grass_active:
+		var e: Vector3 = _grass_active[gid]
+		e.x -= fade
+		if e.x <= 0.0:
+			dead.append(gid)
+			_write_blade(gid, 0.0, Vector2.ZERO)
+		else:
+			_grass_active[gid] = e
+			_write_blade(gid, e.x, Vector2(e.y, e.z))
+	for gid in dead:
+		_grass_active.erase(gid)
+	# 2) Stamp the grass on the tile under the cat — flattened, splayed away from it.
+	if _player == null:
+		return
+	var p := _player.global_position
+	var ptile := Vector2i(roundi(p.x / cell_size), roundi(p.z / cell_size))
+	var bin: Array = _grass_bins.get(ptile, [])
+	for gid in bin:
+		var bp: Vector3 = _grass_blade_pos[gid]
+		var dir := Vector2(bp.x - p.x, bp.z - p.z)
+		dir = dir.normalized() if dir.length() > 0.0001 else Vector2(0, 1)
+		_grass_active[gid] = Vector3(1.0, dir.x, dir.y)
+		_write_blade(gid, 1.0, dir)
+
+## Write one blade's bend amount + push direction into its MultiMesh custom data.
+func _write_blade(gid: int, bend: float, dir: Vector2) -> void:
+	var mm: MultiMesh = _grass_mms[_grass_blade_mm[gid]]
+	mm.set_instance_custom_data(_grass_blade_idx[gid],
+		Color(bend, dir.x * 0.5 + 0.5, dir.y * 0.5 + 0.5, 0.0))
 
 # --- Keyhole see-through --------------------------------------------------
 

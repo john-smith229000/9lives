@@ -20,8 +20,9 @@ grid_size = 30
 generate_terrain = false
 map_path = NodePath("Map")
 buildings_path = NodePath("Buildings")
-day_night_enabled = true
 block_tiles = Array[Vector2i]([])
+grass_from_paint = true
+day_night_enabled = true
 ball_tiles = Array[Vector2i]([])
 
 [node name="Grid" type="Node3D" parent="." unique_id=1405937965]
