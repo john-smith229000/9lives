@@ -80,6 +80,16 @@ const BIT_S := 8   # +Z
 ## plop fluid instead of snapping to the surface.
 @export var water_settle_rate: float = 5.0
 
+@export_group("Hints")
+## Spotlight the first ball at level start (outline + camera pan) until it's
+## shoved for the first time.
+@export var hint_ball_at_start: bool = false
+## Seconds the camera lingers on the hinted ball before panning back to the cat.
+@export var hint_camera_hold: float = 1.6
+## Outline colour and hull size (relative; 1.06 = 6% larger = thicker outline).
+@export var hint_outline_color: Color = Color(1.0, 0.92, 0.25)
+@export var hint_outline_scale: float = 1.06
+
 @export_group("Rolling Balls")
 ## Tiles (grid x, z) that start with a rollable ball on them.
 @export var ball_tiles: Array[Vector2i] = [Vector2i(7, 10)]
@@ -147,6 +157,10 @@ var _ball_scene: PackedScene
 var _balls: Array = []          # [{node, dir, speed, resting, tile, start}]
 var _ball_radius := 0.375
 
+# --- Hint (spotlight an object until interacted with) ---
+var _hint_ball_node: Node3D = null
+var _hint_cam_timer := 0.0
+
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
 @onready var _sun: DirectionalLight3D = $Sun
@@ -183,6 +197,8 @@ func _ready() -> void:
 	_setup_click_catcher()
 	if enable_keyhole:
 		_apply_keyhole()
+	if hint_ball_at_start and not _balls.is_empty():
+		_start_ball_hint()
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -930,6 +946,12 @@ func _process(delta: float) -> void:
 	_update_keyhole(delta)
 	if npc_enabled and not _npc_spawned:
 		_try_spawn_npc()
+	# After lingering on a hinted object, pan the camera back to the cat (the
+	# outline stays until the object is actually interacted with).
+	if _hint_cam_timer > 0.0:
+		_hint_cam_timer -= delta
+		if _hint_cam_timer <= 0.0 and _camera and _camera.has_method("release_focus"):
+			_camera.release_focus()
 
 # --- Keyhole see-through --------------------------------------------------
 
@@ -1138,6 +1160,26 @@ func _update_goal() -> void:
 			goal["won"] = false
 			_place_goal(goal, false)
 
+# --- Hint spotlight ------------------------------------------------------
+
+## Outline the first ball and pan the camera to it. The outline stays until the
+## ball is shoved (see _launch_ball); the camera pans back after hint_camera_hold.
+func _start_ball_hint() -> void:
+	_hint_ball_node = _balls[0]["node"]
+	Outline.add(_hint_ball_node, hint_outline_color, hint_outline_scale)
+	if _camera and _camera.has_method("focus_on"):
+		_camera.focus_on(_hint_ball_node)
+		_hint_cam_timer = hint_camera_hold
+
+func _clear_ball_hint() -> void:
+	if _hint_ball_node == null:
+		return
+	Outline.remove(_hint_ball_node)
+	_hint_ball_node = null
+	_hint_cam_timer = 0.0
+	if _camera and _camera.has_method("release_focus"):
+		_camera.release_focus()
+
 # --- Rolling balls -------------------------------------------------------
 
 func _spawn_balls() -> void:
@@ -1188,8 +1230,15 @@ func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
 	var ke := 0.5 * ball_launch_speed * ball_launch_speed
 	var tile := cur
 	var tiles := 0
-	while not _ball_blocked(tile + dir, ball) and tiles < grid_size * 2:
+	while tiles < grid_size * 2:
 		var nxt := tile + dir
+		if _ball_blocked(nxt, ball):
+			break
+		# Open water stops the ball: it rolls in and sinks (final tile).
+		if _water.has(nxt) and not _blocks.has(nxt):
+			tile = nxt
+			tiles += 1
+			break
 		var de := _base_elev(nxt) - _base_elev(tile)
 		var cost := ball_friction * cell_size + ball_slope_accel * de
 		if cost <= 0.0:
@@ -1213,13 +1262,16 @@ func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
 	ball["target"] = Vector2((cur.x + dir.x * tiles) * cell_size, (cur.y + dir.y * tiles) * cell_size)
 	# Deceleration that stops exactly at the target center, starting at launch speed.
 	ball["decel"] = (ball_launch_speed * ball_launch_speed) / (2.0 * dist)
+	# First shove of the hinted ball clears its spotlight.
+	if ball["node"] == _hint_ball_node:
+		_clear_ball_hint()
 	return true
 
 func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:
 	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 		return true
-	if _blocks.has(tile):
-		return true
+	if _blocks.has(tile) and not _water.has(tile):
+		return true                     # land crate blocks; a floating crate is rollable
 	if tile == _player_tile():
 		return true                     # don't roll through the cat
 	for b in _balls:
@@ -1229,6 +1281,9 @@ func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:
 
 func _base_elev(tile: Vector2i) -> float:
 	if tile.x >= 0 and tile.x < grid_size and tile.y >= 0 and tile.y < grid_size:
+		# Roll on top of a floating crate; else the terrain height.
+		if _water.has(tile) and _blocks.has(tile):
+			return get_elevation(tile.x, tile.y)
 		return float(_heights[tile.x][tile.y])
 	return 0.0
 
@@ -1285,8 +1340,17 @@ func _update_ball_height(ball: Dictionary, delta: float) -> void:
 	var node: Node3D = ball["node"]
 	var tx := roundi(node.position.x / cell_size)
 	var tz := roundi(node.position.z / cell_size)
-	var target_y := get_elevation(tx, tz) + 0.5 + _ball_radius
-	node.position.y = lerpf(node.position.y, target_y, 1.0 - exp(-15.0 * delta))
+	var tile := Vector2i(tx, tz)
+	var target_y: float
+	var rate := 15.0
+	if _water.has(tile) and not _blocks.has(tile):
+		# Open water: no float — sink (slowly) to the pond floor.
+		target_y = (_water_surface - 1.0) + _ball_radius
+		rate = 4.0
+	else:
+		# Terrain, or the top of a floating crate (get_elevation returns its top).
+		target_y = get_elevation(tx, tz) + 0.5 + _ball_radius
+	node.position.y = lerpf(node.position.y, target_y, 1.0 - exp(-rate * delta))
 
 ## Min and max Y of a single-node glb relative to its origin (bottom & top).
 func _measure_aabb_y(scene: PackedScene) -> Vector2:

@@ -29,6 +29,9 @@ extends Camera3D
 @export var far_plane: float = 120.0
 
 var _target: Node3D
+## When set, the camera pans to focus this node instead of the player. Cleared to
+## return to the player. Used to spotlight an object (e.g. a hint).
+var _focus_target: Node3D = null
 var _offset: Vector3
 # Smoothed point the camera orbits/looks at. Equals the player when standing
 # still, lags a touch while it moves. We orbit THIS so the cat stays centered.
@@ -65,6 +68,14 @@ func _ready() -> void:
 ## The player reads this to keep WASD aligned with the on-screen view.
 func get_quadrant() -> int:
 	return ((_quadrant % 4) + 4) % 4
+
+## Pan to spotlight `node` (instead of the player) until release_focus().
+func focus_on(node: Node3D) -> void:
+	_focus_target = node
+
+## Return the camera focus to the player.
+func release_focus() -> void:
+	_focus_target = null
 
 ## Snap the view back to the default orientation (used on restart).
 func reset_rotation() -> void:
@@ -114,13 +125,15 @@ func _process(delta: float) -> void:
 		_cur_yaw = lerp_angle(_yaw_from, _yaw_to, e)
 	rotation = Vector3(deg_to_rad(pitch_deg), _cur_yaw, 0.0)
 	_offset = global_transform.basis.z * distance
-	if _target == null:
+	# Follow the spotlight target if one is set, else the player.
+	var look: Node3D = _focus_target if _focus_target != null else _target
+	if look == null:
 		return
-	# Smooth the focus point toward the player, then place the camera at a rigid
+	# Smooth the focus point toward the target, then place the camera at a rigid
 	# offset from it. Rotation orbits this focus, so the cat never swings off
 	# center while the view spins.
 	if follow_smooth <= 0.0:
-		_focus = _target.global_position
+		_focus = look.global_position
 	else:
-		_focus = _focus.lerp(_target.global_position, 1.0 - exp(-follow_smooth * delta))
+		_focus = _focus.lerp(look.global_position, 1.0 - exp(-follow_smooth * delta))
 	global_position = _focus + _offset
