@@ -47,6 +47,9 @@ const BIT_S := 8   # +Z
 @export_group("Pushable Blocks")
 ## Tiles (grid x, z) that start with a pushable block on them.
 @export var block_tiles: Array[Vector2i] = [Vector2i(12, 10)]
+## When true, a crate shoves the whole line of crates in front of it (a future
+## experiment). Off by default: crates push one at a time.
+@export var crates_chainable: bool = false
 
 @export_group("Holes")
 ## Tiles (grid x, z) that hold a hole: the cat can't walk onto them, only jump
@@ -124,6 +127,7 @@ var _defs: Array = []           # [{scene, mask, top}]
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
 var _holes: Dictionary = {}     # Vector2i(tile) -> hole Node3D (jump-over gaps)
 var _water: Dictionary = {}     # Vector2i(tile) -> water Node3D
+var _water_stack: Dictionary = {}  # Vector2i(water tile) -> [crate nodes], bottom->top
 var _water_surface := 0.5       # flat world Y of the water top
 var _block_water: Dictionary = {}  # crate instance_id -> seconds afloat (for the bob)
 var _block_water_dir: Dictionary = {}  # crate instance_id -> Vector2i it was shoved in
@@ -489,6 +493,7 @@ func _all_mesh_instances(node: Node, acc: Array = []) -> Array:
 ## Send every block back to the tile it started on (used by the Restart button).
 func reset_blocks() -> void:
 	_blocks.clear()
+	_water_stack.clear()
 	_block_water.clear()
 	_block_water_dir.clear()
 	for s in _block_starts:
@@ -765,42 +770,96 @@ func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 	# A hole can't be walked onto (only jumped over).
 	if _holes.has(tile):
 		return false
-	# Water blocks the cat, unless a crate floats there — then it's a platform the
-	# cat walks onto (stands on top; a floating crate isn't pushed).
+	# Water: empty water blocks; a LONE floating crate is a platform to walk onto;
+	# a STACK (2+) gets its top crate shoved off to the next tile as the cat steps
+	# down onto the base.
 	if _water.has(tile):
-		return _blocks.has(tile)
+		if not _blocks.has(tile):
+			return false
+		if _water_stack.get(tile, []).size() <= 1:
+			return true                       # lone floating crate -> mount it
+		return _shove_stack_top(tile, dir)    # stacked -> shove the top off
 	# A ball (rolling or resting): (re)shove it and step into the tile it vacates.
-	# If it can't move (obstacle right behind it), the cat is blocked too.
 	var ball := _ball_at(tile)
 	if not ball.is_empty():
 		return _launch_ball(ball, dir)
 	if not _blocks.has(tile):
 		return true
-	# Gather the contiguous line of crates ahead, so a crate can shove others
-	# (e.g. deeper into water). `c` ends on the first free tile past the line.
-	var line: Array[Vector2i] = []
-	var c := tile
-	while _blocks.has(c):
-		line.append(c)
-		c += dir
-	# That free tile must be a valid crate destination (on-board, no hole/ball).
-	if c.x < 0 or c.x >= grid_size or c.y < 0 or c.y >= grid_size:
+	# Pushing a land crate. Chaining a whole line at once is a future experiment.
+	var line: Array[Vector2i] = [tile]
+	if crates_chainable:
+		var c := tile + dir
+		while _blocks.has(c):
+			line.append(c)
+			c += dir
+	var beyond: Vector2i = line[line.size() - 1] + dir
+	if beyond.x < 0 or beyond.x >= grid_size or beyond.y < 0 or beyond.y >= grid_size:
 		return false
-	if _holes.has(c) or not _ball_at(c).is_empty():
+	if _holes.has(beyond) or not _ball_at(beyond).is_empty():
 		return false
-	# Shift the whole line one tile (far crate first so occupancy stays valid),
-	# and hand every slide to the player to drive in lockstep.
+	if _blocks.has(beyond):
+		# Destination occupied: only a single crate pushed onto a LONE floating
+		# crate stacks on top of it; anything else is blocked.
+		if not crates_chainable and _water.has(beyond) and _water_stack.get(beyond, []).size() == 1:
+			var pb: Node3D = _blocks[tile]
+			_remove_crate(pb, tile)
+			_add_crate(pb, beyond)
+			_block_water_dir[pb.get_instance_id()] = dir
+			return {"blocks": [{"block": pb, "from": pb.position, "to": _block_world_pos(beyond)}]}
+		return false
+	# Shift the crate(s) one tile (far crate first so occupancy stays valid).
 	var pushes: Array = []
 	for i in range(line.size() - 1, -1, -1):
 		var from_tile: Vector2i = line[i]
 		var to_tile: Vector2i = from_tile + dir
 		var blk: Node3D = _blocks[from_tile]
-		_blocks.erase(from_tile)
-		_blocks[to_tile] = blk
+		_remove_crate(blk, from_tile)
+		_add_crate(blk, to_tile)
 		if _water.has(to_tile):
 			_block_water_dir[blk.get_instance_id()] = dir   # for the entry-dive tip
 		pushes.append({"block": blk, "from": blk.position, "to": _block_world_pos(to_tile)})
 	return {"blocks": pushes}
+
+## Shove the top crate of a stacked water tile onto `tile + dir` (a new lone
+## floating crate, or a land crate), letting the cat step onto the base. Returns
+## the push for the player to drive, or false if there's nowhere to shove it.
+func _shove_stack_top(tile: Vector2i, dir: Vector2i) -> Variant:
+	var dest := tile + dir
+	if dest.x < 0 or dest.x >= grid_size or dest.y < 0 or dest.y >= grid_size:
+		return false
+	if _holes.has(dest) or _blocks.has(dest) or not _ball_at(dest).is_empty():
+		return false
+	var stack: Array = _water_stack[tile]
+	var top: Node3D = stack[stack.size() - 1]
+	_remove_crate(top, tile)                  # pop it off the stack (base remains)
+	_add_crate(top, dest)                     # floats at dest (or lands on ground)
+	if _water.has(dest):
+		_block_water_dir[top.get_instance_id()] = dir
+	return {"blocks": [{"block": top, "from": top.position, "to": _block_world_pos(dest)}]}
+
+## Add a crate onto a tile, tracking bottom->top stacks on water tiles.
+func _add_crate(blk: Node3D, tile: Vector2i) -> void:
+	if _water.has(tile):
+		var s: Array = _water_stack.get(tile, [])
+		s.append(blk)
+		_water_stack[tile] = s
+		_blocks[tile] = s[s.size() - 1]       # _blocks tracks the top crate
+	else:
+		_blocks[tile] = blk
+
+## Remove a crate from a tile, updating the water stack / occupancy.
+func _remove_crate(blk: Node3D, tile: Vector2i) -> void:
+	if _water_stack.has(tile):
+		var s: Array = _water_stack[tile]
+		s.erase(blk)
+		if s.is_empty():
+			_water_stack.erase(tile)
+			_blocks.erase(tile)
+		else:
+			_water_stack[tile] = s
+			_blocks[tile] = s[s.size() - 1]
+	elif _blocks.get(tile) == blk:
+		_blocks.erase(tile)
 
 # --- Goal ----------------------------------------------------------------
 
@@ -1002,23 +1061,45 @@ func _update_keyhole(delta: float) -> void:
 ## The player drives crate X/Z while pushing; World owns the Y.
 func _update_crate_heights(delta: float) -> void:
 	for tile in _blocks:
-		var b: Node3D = _blocks[tile]
-		var tx := roundi(b.position.x / cell_size)
-		var tz := roundi(b.position.z / cell_size)
-		var id := b.get_instance_id()
-		if _water.has(Vector2i(tx, tz)):
-			# Floating: a big bob on entry that decays to a gentle one, centred so
-			# the crate sits 0.1 m above the water surface.
+		if _water.has(tile):
+			_float_stack(tile, delta)
+		else:
+			var b: Node3D = _blocks[tile]
+			var tx := roundi(b.position.x / cell_size)
+			var tz := roundi(b.position.z / cell_size)
+			var id := b.get_instance_id()
+			if _block_water.has(id):
+				_block_water.erase(id)          # left the water; reset the bob
+				_block_water_dir.erase(id)
+			var target_y := (get_elevation(tx, tz) + 0.5) - _block_bottom
+			b.position.y = lerpf(b.position.y, target_y, 1.0 - exp(-15.0 * delta))
+
+## Position a water tile's crate stack: the bottom floats with a decaying bob
+## (0.1 m of its top above the surface), and each crate above rides on the one
+## below. Entry eases in so it drops fluidly.
+func _float_stack(tile: Vector2i, delta: float) -> void:
+	var stack: Array = _water_stack.get(tile, [])
+	if stack.is_empty():
+		return
+	var float_y := (_water_surface + 0.1) - (_block_bottom + _block_height)
+	for idx in range(stack.size()):
+		var crate: Node3D = stack[idx]
+		# Float/ride only once the crate is physically over the water tile, so a
+		# crate being shoved in slides to the edge at ground height, THEN drops in.
+		var ctx := roundi(crate.position.x / cell_size)
+		var ctz := roundi(crate.position.z / cell_size)
+		if Vector2i(ctx, ctz) != tile:
+			var gy := (get_elevation(ctx, ctz) + 0.5) - _block_bottom
+			crate.position.y = lerpf(crate.position.y, gy, 1.0 - exp(-15.0 * delta))
+			continue
+		if idx == 0:
+			# Bottom: float with a decaying bob + an entry-dive that eases to level.
+			var id := crate.get_instance_id()
 			var t: float = float(_block_water.get(id, 0.0)) + delta
 			_block_water[id] = t
 			var amp := water_bob_settle + (water_bob_amplitude - water_bob_settle) * exp(-water_bob_decay * t)
-			# Settle so the crate's TOP sits 0.1 m above the surface (mostly
-			# submerged), but never dip the top under the surface.
 			var off := maxf(amp * sin(TAU * water_bob_freq * t), -water_bob_max_dip)
-			var float_y := (_water_surface + 0.1) - (_block_bottom + _block_height)
-			# Ease toward the float+bob so the crate drops in fluidly (no snap).
-			b.position.y = lerpf(b.position.y, float_y + off, 1.0 - exp(-water_settle_rate * delta))
-			# Entry-dive tip in the shove direction, easing back to level.
+			crate.position.y = lerpf(crate.position.y, float_y + off, 1.0 - exp(-water_settle_rate * delta))
 			var edir: Vector2i = _block_water_dir.get(id, Vector2i.ZERO)
 			var dive := water_dive_angle * exp(-water_dive_decay * t)
 			var er := Vector3.ZERO
@@ -1026,13 +1107,11 @@ func _update_crate_heights(delta: float) -> void:
 				er.z = float(edir.x) * dive
 			elif edir.y != 0:
 				er.x = float(edir.y) * dive
-			b.rotation = b.rotation.lerp(er, 1.0 - exp(-10.0 * delta))
+			crate.rotation = crate.rotation.lerp(er, 1.0 - exp(-10.0 * delta))
 		else:
-			if _block_water.has(id):
-				_block_water.erase(id)          # left the water; reset the bob
-				_block_water_dir.erase(id)
-			var target_y := (get_elevation(tx, tz) + 0.5) - _block_bottom
-			b.position.y = lerpf(b.position.y, target_y, 1.0 - exp(-15.0 * delta))
+			# Rides on the crate below (and levels out).
+			crate.position.y = lerpf(crate.position.y, stack[idx - 1].position.y + _block_height, 1.0 - exp(-water_settle_rate * delta))
+			crate.rotation = crate.rotation.lerp(Vector3.ZERO, 1.0 - exp(-10.0 * delta))
 
 ## Toggle each goal by how much its triggering object (crate or ball) covers it.
 ## Triggers at ~40% coverage, releases below 30% (hysteresis avoids flicker).
