@@ -31,6 +31,9 @@ extends CharacterBody3D
 ## How far above the feet the grid wall-check probes, so a floor mesh under the
 ## cat isn't mistaken for a wall (only upright features block).
 @export var wall_check_lift: float = 0.35
+## Max height (m) the cat can climb to an adjacent tile by WALKING. Steeper than
+## this and it can't step there — it has to jump. (Descending is unlimited.)
+@export var max_walk_step: float = 0.4
 
 ## --- Jump (tap Space) ---------------------------------------------------
 ## Max height (m) the cat can land UP onto. A ledge/crate taller than this reads
@@ -364,7 +367,8 @@ func _tile_blocked(tile: Vector2i) -> bool:
 	# Cast straight down at several points across the tile. A hit well above the
 	# walkable surface means a wall/feature occupies it — sampling the whole tile
 	# (not just the centre) catches walls that don't sit on the tile centre.
-	var w := _tile_to_world(tile)
+	# Probe against the TERRAIN surface (ignore crates that ride on the tile).
+	var w := Vector3(tile.x * cell_size, ground_y + _elevation(tile), tile.y * cell_size)
 	var surface := w.y - 0.5
 	for o in _TILE_SAMPLES:
 		var params := PhysicsRayQueryParameters3D.create(
@@ -574,14 +578,23 @@ func _begin_segment(dir: Vector2i) -> bool:
 	# features). Uses the same symmetric probe as the pathfinder so they agree.
 	if _tile_blocked(t):
 		return false
-	# Ask World whether the tile is enterable. Returns: false = blocked,
-	# true = free, or {block, from, to} when a block is being pushed.
-	if block_handler.is_valid():
+	var climb := _surface(t) - _surface(_grid)
+	# A land crate ahead: STEP ONTO it if its top is within a walkable step of
+	# where we're standing (crossing between equal-height crates); otherwise it's
+	# a crate-height above us (we're on the ground beside it) and gets pushed.
+	var step_onto_crate := _tile_has_block(t) and not _tile_has_water(t) and climb <= max_walk_step
+	# Otherwise ask World whether the tile is enterable: false = blocked, true =
+	# free, or {blocks:[...]} when crate(s) are being pushed.
+	if not step_onto_crate and block_handler.is_valid():
 		var res: Variant = block_handler.call(t, dir)
 		if res is Dictionary:
 			_push = res        # we'll drive this block in lockstep
 		elif res is bool and not res:
 			return false       # unpushable block in the way
+	# Walking can't climb more than max_walk_step. If this isn't a push (a plain
+	# walk / step / mount) and the step up is too tall, block it — jump instead.
+	if _push.is_empty() and climb > max_walk_step:
+		return false
 	# Walking off a ledge/crate of at least hop_off_min_height becomes a short
 	# hop-off (a jump arc) instead of a ramp down. Never while pushing a crate.
 	if _push.is_empty() and _surface(_grid) - _surface(t) >= hop_off_min_height:
@@ -904,7 +917,9 @@ func _world_to_tile(pos: Vector3) -> Vector2i:
 	return Vector2i(roundi(pos.x / cell_size), roundi(pos.z / cell_size))
 
 func _tile_to_world(t: Vector2i) -> Vector3:
-	return Vector3(t.x * cell_size, ground_y + _elevation(t), t.y * cell_size)
+	# Ride the standing surface (top of a crate on the tile, else terrain) so the
+	# cat can walk across crate tops, not just terrain.
+	return Vector3(t.x * cell_size, ground_y + _surface(t), t.y * cell_size)
 
 func _elevation(t: Vector2i) -> float:
 	if height_provider.is_valid():
