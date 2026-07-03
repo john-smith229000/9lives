@@ -15,6 +15,23 @@ uniform float blade_height = 0.5;     // your tuft's height (normalizes the mask
 
 uniform vec3 base_color : source_color = vec3(0.13, 0.35, 0.11);
 uniform vec3 tip_color : source_color = vec3(0.40, 0.72, 0.28);
+// Sun-kissed tips: a warmer/lighter colour blended into just the top of the blade.
+uniform vec3 tip_highlight : source_color = vec3(0.65, 0.85, 0.40);
+uniform float tip_kiss : hint_range(0.0, 1.0) = 0.35;
+// Soft wrap lighting: lifts the shadow side of the field so it reads as dim grass
+// instead of a crushed, flat, dark mass (view-independent, so it works for the
+// fixed isometric camera). 0 = normal hard lighting, 1 = fully soft/wrapped.
+uniform float shadow_lift : hint_range(0.0, 1.0) = 0.5;
+// Thin vertical blades self-shade to black under an overhead sun. Bending their
+// normals toward straight up lets the whole field read as a soft mass lit from
+// the sky instead of dark slivers. 0 = raw mesh normals, 1 = fully up-facing.
+uniform float normal_up : hint_range(0.0, 1.0) = 0.65;
+// Per-blade colour variation so the field isn't one flat green: a warm/cool hue
+// nudge and a brightness nudge per blade, plus a slow large-scale patchiness.
+uniform float hue_variation = 0.06;         // warm (yellow-green) <-> cool (blue-green)
+uniform float brightness_variation = 0.12;  // lighter / darker blades
+uniform float patch_variation = 0.08;       // field-scale colour patches
+uniform float patch_scale = 0.35;           // size of those patches (smaller = bigger)
 
 // Player interaction is per-blade: the CPU writes each blade's current bend and
 // push direction into INSTANCE_CUSTOM (r = bend amount 0..1, g/b = world-XZ push
@@ -23,6 +40,10 @@ uniform vec3 tip_color : source_color = vec3(0.40, 0.72, 0.28);
 uniform float bend_strength = 0.5;
 
 varying float v_mask;
+varying float v_hue;    // per-blade warm/cool random (-0.5..0.5)
+varying float v_bright; // per-blade brightness random (-0.5..0.5)
+varying float v_kiss;   // per-blade sun-kiss strength random (0..1)
+varying vec2 v_origin;  // blade world XZ, for large-scale colour patches
 
 void vertex() {
 	// 0 at the root, 1 at the tip — how much this vertex sways / how light it is.
@@ -30,6 +51,10 @@ void vertex() {
 	v_mask = h;
 	// Per-tuft phase from its world origin, so they don't all wave in unison.
 	vec3 origin = MODEL_MATRIX[3].xyz;
+	v_hue = fract(sin(dot(origin.xz, vec2(45.11, 12.73))) * 91.377) - 0.5;
+	v_bright = fract(sin(dot(origin.xz, vec2(9.41, 71.53))) * 47843.13) - 0.5;
+	v_kiss = fract(sin(dot(origin.xz, vec2(63.7, 21.31))) * 3571.19);
+	v_origin = origin.xz;
 	float phase = (origin.x + origin.z) * sway_scale;
 	float wave = sin(TIME * wind_speed + phase)
 		+ flutter * sin(TIME * wind_speed * 2.7 + phase * 1.7);
@@ -55,7 +80,34 @@ void vertex() {
 }
 
 void fragment() {
-	ALBEDO = mix(base_color, tip_color, v_mask);
+	vec3 col = mix(base_color, tip_color, v_mask);
+	// Warm/cool hue nudge per blade (push red up + blue down for warm, and back).
+	col.r += v_hue * 2.0 * hue_variation;
+	col.b -= v_hue * 2.0 * hue_variation;
+	// Per-blade brightness, then a slow large-scale patchiness across the field.
+	col *= 1.0 + v_bright * 2.0 * brightness_variation;
+	float patch = sin(v_origin.x * patch_scale) * sin(v_origin.y * patch_scale * 0.8) * 0.5 + 0.5;
+	col *= mix(1.0 - patch_variation, 1.0 + patch_variation, patch);
+	// Sun-kissed tips: warm highlight concentrated at the very top of the blade,
+	// its strength varying per blade so some catch the light more than others.
+	col = mix(col, tip_highlight, pow(v_mask, 3.0) * tip_kiss * mix(0.3, 1.3, v_kiss));
+	ALBEDO = clamp(col, vec3(0.0), vec3(1.0));
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
+	// Lean the shading normal toward world-up so overhead light doesn't graze the
+	// thin blades into darkness (VIEW space, since NORMAL is view-space here).
+	vec3 up_view = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+	NORMAL = normalize(mix(NORMAL, up_view, normal_up));
+}
+
+// Soft "wrap" diffuse: instead of light falling to black at the terminator, it
+// eases down to a soft floor, so blades facing away from the sun stay readably
+// lit. This is what keeps the shadow side of the field from looking flat/dark.
+void light() {
+	float ndl = dot(normalize(NORMAL), normalize(LIGHT));
+	float hard = max(ndl, 0.0);                       // ordinary lambert
+	float soft = ndl * 0.5 + 0.5;                     // wrapped: 0.5 at the terminator
+	soft *= soft;                                     // half-Lambert falloff
+	float diff = mix(hard, soft, shadow_lift);
+	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * ATTENUATION * diff;
 }

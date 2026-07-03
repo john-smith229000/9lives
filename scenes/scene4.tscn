@@ -19,6 +19,7 @@ script = ExtResource("1_world")
 grid_size = 30
 generate_terrain = false
 map_path = NodePath("Map")
+matte_ground = true
 buildings_path = NodePath("Buildings")
 block_tiles = Array[Vector2i]([])
 grass_from_paint = true

@@ -26,6 +26,9 @@ const BIT_S := 8   # +Z
 @export var generate_terrain: bool = true
 ## Optional custom map node to auto-generate trimesh collision for (Scene 3).
 @export var map_path: NodePath
+## Force the map's materials fully matte (rough, non-metallic, no specular) so the
+## ground has no shine/reflection.
+@export var matte_ground: bool = false
 ## Optional node holding the buildings (separate meshes). When set, the keyhole
 ## see-through is applied ONLY to these meshes (so the map/floor stays solid),
 ## and trimesh collision is generated for them so the cat routes around them.
@@ -94,18 +97,41 @@ const BIT_S := 8   # +Z
 ## Tiles (grid x, z) that get grass — used only when grass_from_paint is off.
 @export var grass_tiles: Array[Vector2i] = []
 ## Tufts scattered per grass tile.
-@export var grass_per_tile: int = 100
-## How far each tuft wanders within its slot on the tile (0 = perfect grid,
-## 1 = can reach the slot edges). Keeps coverage even instead of clumpy.
-@export var grass_jitter: float = 0.8
+@export var grass_per_tile: int = 120
+## How far each blade wanders within its slot on the tile (0 = perfect grid,
+## 1 = can reach neighbouring slots). Push toward 1 to break up the grid look.
+@export var grass_jitter: float = 1.0
 ## Overall size multiplier on the model's native size (lower this if the tuft
 ## imported bigger than you want; 1.0 = original size).
 @export var grass_scale: float = 0.14
+## Per-blade height variation (0 = every blade the same height, 0.4 = ±40%). A
+## ragged top surface reads far more natural than a uniform sheet of grass.
+@export_range(0.0, 0.9) var grass_height_variation: float = 0.35
 ## Grass colour (the tips; roots are a touch darker).
 @export var grass_color: Color = Color("6a9b47")
+## How much blade normals lean toward straight up (0 = raw mesh, 1 = fully up).
+## Higher stops thin blades self-shading to black under an overhead sun.
+@export_range(0.0, 1.0) var grass_normal_up: float = 0.65
+## Let grass cast shadows. Off avoids the shimmering self-shadow jitter that thin
+## swaying blades cause in the directional shadow map (grass still receives them).
+@export var grass_cast_shadows: bool = false
 ## Wind tip-sway distance (m) and speed.
-@export var grass_wind_strength: float = 0.12
-@export var grass_wind_speed: float = 1.5
+@export var grass_wind_strength: float = 0.18
+@export var grass_wind_speed: float = 1.8
+## How out-of-phase neighbouring blades are. Higher makes the field ripple against
+## itself (very visible) instead of leaning as one block.
+@export var grass_sway_scale: float = 1.3
+## Per-blade colour variation: warm/cool hue nudge, lighter/darker nudge, and slow
+## field-scale patchiness. Small amounts read as natural; large gets noisy.
+@export var grass_hue_variation: float = 0.035
+@export var grass_brightness_variation: float = 0.12
+@export var grass_patch_variation: float = 0.08
+## How strongly the blade tips look sunlit (warmer/lighter). 0 = off.
+@export_range(0.0, 1.0) var grass_tip_kiss: float = 1.0
+## Softens the lighting so the shadow side of the field lifts to dim grass instead
+## of a flat dark mass. 0 = hard/normal lighting, 1 = fully soft. Works from any
+## camera angle (unlike a backlight glow, which needs to face the sun).
+@export_range(0.0, 1.0) var grass_shadow_lift: float = 0.5
 ## How far flattened blades push over.
 @export var grass_bend_strength: float = 2.0
 ## Seconds a flattened blade takes to spring back upright after the cat leaves.
@@ -241,6 +267,8 @@ func _ready() -> void:
 	_build_grid()
 	_build_map_collision()
 	_build_buildings_collision()
+	if matte_ground:
+		_matte_map()
 	_spawn_blocks()
 	_spawn_goal()
 	_spawn_balls()
@@ -286,6 +314,25 @@ func _build_map_collision() -> void:
 	print("[map] generating collision for ", meshes.size(), " mesh(es) under ", map_path)
 	for mi in meshes:
 		(mi as MeshInstance3D).create_trimesh_collision()
+
+## Force every material on the map fully matte: rough, non-metallic, no specular
+## and no reflections, so the ground has zero shine. Duplicates each material so
+## only this scene's ground is affected.
+func _matte_map() -> void:
+	var map := get_node_or_null(map_path)
+	if map == null:
+		return
+	for node in _all_mesh_instances(map):
+		var mi := node as MeshInstance3D
+		for s in mi.get_surface_override_material_count():
+			var src: Material = mi.get_active_material(s)
+			if src is BaseMaterial3D:
+				var m: BaseMaterial3D = (src as BaseMaterial3D).duplicate()
+				m.metallic = 0.0
+				m.roughness = 1.0
+				m.metallic_specular = 0.0
+				m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+				mi.set_surface_override_material(s, m)
 
 ## Generate trimesh collision for the separate building meshes so the cat is
 ## blocked by them (the map mesh is now just the floor).
@@ -550,8 +597,12 @@ func _spawn_grass() -> void:
 		for i in grass_per_tile:
 			var cx := origin_x + (float(i % cols) + 0.5) * sub
 			var cz := origin_z + (float(i / cols) + 0.5) * sub
+			# Independent XZ and Y scale: vary height more than width so the top of
+			# the field is ragged (breaks the uniform-sheet / grid look).
+			var sxz := grass_scale * rng.randf_range(0.85, 1.15)
+			var sy := grass_scale * maxf(0.3, 1.0 + rng.randf_range(-grass_height_variation, grass_height_variation))
 			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
-			t = t.scaled(Vector3.ONE * (grass_scale * rng.randf_range(0.9, 1.1)))
+			t = t.scaled(Vector3(sxz, sy, sxz))
 			t.origin = Vector3(
 				cx + rng.randf_range(-0.5, 0.5) * sub * grass_jitter,
 				top,
@@ -591,6 +642,11 @@ func _spawn_grass() -> void:
 			_grass_bins[btile] = bin
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
+		# Thin, swaying blades make the directional shadow map shimmer (worst at
+		# noon when they're edge-on to the sun). Off by default kills that jitter;
+		# grass still receives shadows from buildings.
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if grass_cast_shadows \
+			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var mat := _grass_material(blade_h)
 		mmi.material_override = mat
 		_grass_mats.append(mat)
@@ -619,9 +675,22 @@ func _grass_material(blade_h: float) -> ShaderMaterial:
 	m.shader = preload("res://shaders/grass_wind.gdshader")
 	m.set_shader_parameter("blade_height", blade_h)
 	m.set_shader_parameter("tip_color", grass_color)
-	m.set_shader_parameter("base_color", grass_color.darkened(0.28))
+	m.set_shader_parameter("base_color", grass_color.darkened(0.18))
+	m.set_shader_parameter("normal_up", grass_normal_up)
 	m.set_shader_parameter("wind_strength", grass_wind_strength)
 	m.set_shader_parameter("wind_speed", grass_wind_speed)
+	m.set_shader_parameter("sway_scale", grass_sway_scale)
+	m.set_shader_parameter("hue_variation", grass_hue_variation)
+	m.set_shader_parameter("brightness_variation", grass_brightness_variation)
+	m.set_shader_parameter("patch_variation", grass_patch_variation)
+	# Sun-kissed tips: lighter + warmer (more red/green, less blue) than the tips.
+	var kiss := grass_color.lightened(0.3)
+	kiss.r = minf(1.0, kiss.r + 0.10)
+	kiss.g = minf(1.0, kiss.g + 0.06)
+	kiss.b = maxf(0.0, kiss.b - 0.04)
+	m.set_shader_parameter("tip_highlight", kiss)
+	m.set_shader_parameter("tip_kiss", grass_tip_kiss)
+	m.set_shader_parameter("shadow_lift", grass_shadow_lift)
 	m.set_shader_parameter("bend_strength", grass_bend_strength)
 	return m
 
@@ -1554,7 +1623,7 @@ func _default_day_phases() -> Array[DayPhase]:
 	# Morning snaps its yaw on entry, so night -> morning rises on the East side
 	# instead of the sun swinging all the way around.
 	phases.append(_mk_phase("Morning", Vector3(-20, 120, 0), 0.55, Color(1.0, 0.85, 0.7), Color(0.60, 0.64, 0.72), 0.50, Color(0.74, 0.66, 0.60), true))
-	phases.append(_mk_phase("Midday", Vector3(-78, -30, 0), 0.95, Color(1.0, 0.98, 0.95), Color(0.75, 0.80, 0.86), 0.60, Color(0.45, 0.64, 0.90)))
+	phases.append(_mk_phase("Midday", Vector3(-78, -30, 0), 0.65, Color(1.0, 0.98, 0.95), Color(0.75, 0.80, 0.86), 0.60, Color(0.45, 0.64, 0.90)))
 	phases.append(_mk_phase("Afternoon", Vector3(-50, -55, 0), 0.85, Color(1.0, 0.95, 0.85), Color(0.70, 0.78, 0.85), 0.55, Color(0.50, 0.66, 0.86)))
 	phases.append(_mk_phase("Evening", Vector3(-12, -80, 0), 0.68, Color(1.0, 0.6, 0.36), Color(0.58, 0.48, 0.52), 0.55, Color(0.94, 0.55, 0.4)))
 	# Night sits low on the West (where it set), so evening -> night just dims in
