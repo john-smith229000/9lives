@@ -163,6 +163,24 @@ func sync_to_grid() -> void:
 func is_in_free_mode() -> bool:
 	return _free_mode
 
+## True while the cat is mid-jump (airborne). Used so grass only flattens at the
+## takeoff and landing tiles, not everything the arc passes over.
+func is_jumping() -> bool:
+	return _jumping
+
+## True only while the cat is genuinely off the ground — between takeoff and
+## touchdown, NOT during the crouch or the post-landing recovery frames. Grass
+## uses this so the landing tile flattens the instant the cat lands, not when the
+## whole clip (recovery included) finishes.
+func is_airborne() -> bool:
+	if not _jumping:
+		return false
+	if _jump_clip_playing:
+		var t_lift := jump_takeoff_frame / jump_anim_fps
+		var t_land := jump_land_frame / jump_anim_fps
+		return _jump_t >= t_lift and _jump_t < t_land
+	return _jump_t > 0.0 and _jump_t < 1.0
+
 ## Teleport back to a start position and stop, leaving the house if inside.
 func reset_to_start(pos: Vector3) -> void:
 	if _free_mode:

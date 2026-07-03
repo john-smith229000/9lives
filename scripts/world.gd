@@ -107,10 +107,17 @@ const BIT_S := 8   # +Z
 @export var grass_wind_strength: float = 0.12
 @export var grass_wind_speed: float = 1.5
 ## How far flattened blades push over.
-@export var grass_bend_strength: float = 1.8
+@export var grass_bend_strength: float = 2.0
 ## Seconds a flattened blade takes to spring back upright after the cat leaves.
 ## Each blade fades on its own timer, so higher = a longer-lingering wake.
-@export var grass_recovery: float = 2.5
+@export var grass_recovery: float = 3.5
+## Seconds for grass to press flat once stepped on (so a landing eases in rather
+## than snapping down all at once).
+@export var grass_press_time: float = 0.12
+## Radius (m) of the pressed footprint under the cat: blades right under it flatten
+## fully, easing to none at this distance. Smaller = more concentrated in the tile
+## centre and less overall deformation.
+@export var grass_footprint: float = 0.6
 
 @export_group("Hints")
 ## Spotlight the first ball at level start (outline + camera pan) until it's
@@ -1240,18 +1247,33 @@ func _update_grass(delta: float) -> void:
 			_write_blade(gid, e.x, Vector2(e.y, e.z))
 	for gid in dead:
 		_grass_active.erase(gid)
-	# 2) Stamp the grass on the tile under the cat — flattened, splayed away from it.
+	# 2) Press the grass on the tile under the cat toward flat — splayed away from
+	# it, easing in over grass_press_time so a landing doesn't snap down at once.
+	# Skip while airborne so a jump only flattens its takeoff and landing tiles,
+	# not every tile the arc flies over.
 	if _player == null:
+		return
+	if _player.has_method("is_airborne") and _player.is_airborne():
 		return
 	var p := _player.global_position
 	var ptile := Vector2i(roundi(p.x / cell_size), roundi(p.z / cell_size))
+	var press := delta / maxf(grass_press_time, 0.01)
+	var falloff := maxf(grass_footprint, 0.05)
 	var bin: Array = _grass_bins.get(ptile, [])
 	for gid in bin:
 		var bp: Vector3 = _grass_blade_pos[gid]
-		var dir := Vector2(bp.x - p.x, bp.z - p.z)
-		dir = dir.normalized() if dir.length() > 0.0001 else Vector2(0, 1)
-		_grass_active[gid] = Vector3(1.0, dir.x, dir.y)
-		_write_blade(gid, 1.0, dir)
+		var off := Vector2(bp.x - p.x, bp.z - p.z)
+		var d := off.length()
+		# Full press right under the cat, easing to none at the footprint edge —
+		# so the deformation stays concentrated where the cat actually is.
+		var target := clampf(1.0 - d / falloff, 0.0, 1.0)
+		if target <= 0.0:
+			continue
+		var dir := off.normalized() if d > 0.0001 else Vector2(0, 1)
+		var cur: float = (_grass_active[gid] as Vector3).x if _grass_active.has(gid) else 0.0
+		var amt := minf(cur + press, target) if cur < target else cur
+		_grass_active[gid] = Vector3(amt, dir.x, dir.y)
+		_write_blade(gid, amt, dir)
 
 ## Write one blade's bend amount + push direction into its MultiMesh custom data.
 func _write_blade(gid: int, bend: float, dir: Vector2) -> void:
