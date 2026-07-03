@@ -137,6 +137,9 @@ var block_provider: Callable
 ## Set by World: has_hole(tile) -> bool. True if a hole is there (can't be walked
 ## onto or landed on — only jumped over to the tile beyond).
 var hole_provider: Callable
+## Set by World: has_water(tile) -> bool. True if water is there (can't be walked
+## onto or landed on; crates float in it).
+var water_provider: Callable
 
 func _ready() -> void:
 	_model = $Model
@@ -331,6 +334,10 @@ func _process(delta: float) -> void:
 			_path.clear()        # path blocked — abandon it
 	if _moving:
 		_advance(delta, dir)
+	else:
+		# Rest exactly on the current tile's standing surface, so the cat rides a
+		# bobbing floating crate (and stays put on a mounted crate).
+		global_position.y = ground_y + _surface(_grid)
 	_set_walking(_moving)
 	_update_anim_speed()
 
@@ -482,9 +489,17 @@ func _update_anim_speed() -> void:
 func _tilt_block(dir: Vector2i) -> void:
 	if _push.is_empty():
 		return
-	var block: Node3D = _push["block"]
+	var blocks: Array = _push["blocks"]
+	# Chains just slide (crates plunging into water dive via the world); only a
+	# single crate onto solid ground gets the ground-slope tilt.
+	if blocks.size() != 1:
+		return
+	var entry: Dictionary = blocks[0]
+	if _tile_has_water(_world_to_tile(entry["to"] as Vector3)):
+		return
+	var block: Node3D = entry["block"]
 	_tilted_block = block
-	var de := (_push["to"] as Vector3).y - (_push["from"] as Vector3).y
+	var de := (entry["to"] as Vector3).y - (entry["from"] as Vector3).y
 	var pitch := atan2(de, cell_size) * block_tilt_extra
 	# Tilt about the axis perpendicular to travel so the leading edge follows the slope.
 	var rot := Vector3.ZERO
@@ -622,11 +637,13 @@ func _advance(delta: float, _dir: Vector2i) -> void:
 func _drive_block(progress: float) -> void:
 	if _push.is_empty():
 		return
-	var block: Node3D = _push["block"]
-	# Drive only X/Z; World sets the crate's Y so it rides the surface/goal pad.
-	var p := (_push["from"] as Vector3).lerp(_push["to"] as Vector3, progress)
-	block.position.x = p.x
-	block.position.z = p.z
+	# Drive every crate in the (possibly chained) push. Only X/Z; World sets the
+	# crate's Y so it rides the surface / goal pad / water.
+	for entry in _push["blocks"]:
+		var block: Node3D = entry["block"]
+		var p := (entry["from"] as Vector3).lerp(entry["to"] as Vector3, progress)
+		block.position.x = p.x
+		block.position.z = p.z
 
 func _orient(dir: Vector2i, delta_e: float) -> void:
 	if _model == null or dir == Vector2i.ZERO:
@@ -683,8 +700,9 @@ func _try_jump() -> void:
 func _resolve_jump_target(dir: Vector2i, base: Vector2i) -> Vector2i:
 	var near := base + dir
 	var far := base + dir + dir
-	# A hole ahead: clear it to the tile beyond, if that's a valid landing.
-	if _tile_has_hole(near):
+	# A hole or open water ahead: clear it to the tile beyond, if that's a valid
+	# landing. (Water with a floating crate is a platform — handled below, mounted.)
+	if _tile_has_hole(near) or (_tile_has_water(near) and not _tile_has_block(near)):
 		if _tile_landable(far) and _can_reach(base, far):
 			return far
 		return base                      # can't clear it — pop in place
@@ -720,12 +738,18 @@ func _tile_landable(tile: Vector2i) -> bool:
 	if not _in_bounds(tile) or _tile_has_ball(tile) or _tile_has_hole(tile):
 		return false
 	if _tile_has_block(tile):
-		return true                      # crate: land on top (mount)
+		return true                      # crate: land on top (on land or floating)
+	if _tile_has_water(tile):
+		return false                     # open water — nothing to land on
 	return not _tile_blocked(tile)
 
 ## Is there a hole on this tile? (Can't land here — only clear it.)
 func _tile_has_hole(tile: Vector2i) -> bool:
 	return hole_provider.is_valid() and bool(hole_provider.call(tile))
+
+## Is there water on this tile? (Can't land here.)
+func _tile_has_water(tile: Vector2i) -> bool:
+	return water_provider.is_valid() and bool(water_provider.call(tile))
 
 ## Is there a mountable crate on this tile?
 func _tile_has_block(tile: Vector2i) -> bool:

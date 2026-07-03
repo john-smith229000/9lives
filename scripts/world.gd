@@ -53,6 +53,30 @@ const BIT_S := 8   # +Z
 ## over them to the tile beyond. The hole mesh's top sits at the lowest tile top.
 @export var hole_tiles: Array[Vector2i] = []
 
+@export_group("Water")
+## Tiles (grid x, z) filled with water. Crates can be pushed in and float; the
+## cat can't walk on or land on water.
+@export var water_tiles: Array[Vector2i] = []
+## Bob amplitude (m) right after a crate lands, the gentle amplitude it settles
+## to, how fast it settles, and the bob frequency (Hz).
+@export var water_bob_amplitude: float = 0.22
+@export var water_bob_settle: float = 0.03
+@export var water_bob_decay: float = 1.3
+@export var water_bob_freq: float = 0.9
+## How far (m) the water surface sits below the lowest tile top around the pond,
+## so it recesses into the ground instead of poking above it.
+@export var water_surface_drop: float = 0.1
+## Max the crate dips BELOW its settled float during the bob, so it never sinks
+## the crate top under the surface.
+@export var water_bob_max_dip: float = 0.08
+## Entry tip: how far the crate rotates as it plops in (radians), and how fast
+## that settles back to level. Flip the sign to tip the other way.
+@export var water_dive_angle: float = -0.35
+@export var water_dive_decay: float = 2.5
+## How quickly the crate eases down into the float (higher = snappier). Keeps the
+## plop fluid instead of snapping to the surface.
+@export var water_settle_rate: float = 5.0
+
 @export_group("Rolling Balls")
 ## Tiles (grid x, z) that start with a rollable ball on them.
 @export var ball_tiles: Array[Vector2i] = [Vector2i(7, 10)]
@@ -99,6 +123,10 @@ var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
 var _holes: Dictionary = {}     # Vector2i(tile) -> hole Node3D (jump-over gaps)
+var _water: Dictionary = {}     # Vector2i(tile) -> water Node3D
+var _water_surface := 0.5       # flat world Y of the water top
+var _block_water: Dictionary = {}  # crate instance_id -> seconds afloat (for the bob)
+var _block_water_dir: Dictionary = {}  # crate instance_id -> Vector2i it was shoved in
 var _block_starts: Array = []   # [{block, tile}] for restart
 var _block_bottom := -0.375     # crate's lowest point relative to its origin
 var _block_height := 0.75       # crate height (AABB span), for mounting on top
@@ -133,6 +161,7 @@ func _ready() -> void:
 	_spawn_goal()
 	_spawn_balls()
 	_spawn_holes()
+	_spawn_water()
 	if _player:
 		_player.grid_size = grid_size
 		_player.cell_size = cell_size
@@ -143,6 +172,7 @@ func _ready() -> void:
 		_player.surface_provider = Callable(self, "surface_elevation")
 		_player.block_provider = Callable(self, "has_block")
 		_player.hole_provider = Callable(self, "has_hole")
+		_player.water_provider = Callable(self, "has_water")
 		_player.view_camera = _camera
 		_player.sync_to_grid()
 		_player_start = _player.global_position
@@ -210,8 +240,8 @@ func _build_grid() -> void:
 	if generate_terrain:
 		for x in grid_size:
 			for z in grid_size:
-				if Vector2i(x, z) in hole_tiles:
-					continue          # the hole mesh replaces the ground cube here
+				if Vector2i(x, z) in hole_tiles or Vector2i(x, z) in water_tiles:
+					continue          # hole/water mesh replaces the ground cube here
 				_place_tile(x, z)
 
 func _place_tile(x: int, z: int) -> void:
@@ -300,6 +330,11 @@ func _elevation_for(x: int, z: int) -> float:
 ## Includes the goal pad's current height so the cat / crate stand on top of it.
 func get_elevation(x: int, z: int) -> float:
 	if x >= 0 and x < grid_size and z >= 0 and z < grid_size:
+		# A crate floating in water is a platform: stand on its LIVE top so the cat
+		# rides the bob with it.
+		if _water.has(Vector2i(x, z)) and _blocks.has(Vector2i(x, z)):
+			var fb: Node3D = _blocks[Vector2i(x, z)]
+			return (fb.position.y + _block_bottom + _block_height) - 0.5
 		var e: float = _heights[x][z]
 		for goal in _goals:
 			if goal["tile"].x == x and goal["tile"].y == z:
@@ -312,7 +347,9 @@ func get_elevation(x: int, z: int) -> float:
 ## for jump resolution; plain walking still uses get_elevation (terrain only).
 func surface_elevation(x: int, z: int) -> float:
 	var e := get_elevation(x, z)
-	if _blocks.has(Vector2i(x, z)):
+	# On land, standing surface is the crate top. In water the crate floats and
+	# get_elevation already gives its top, so don't add its height again.
+	if _blocks.has(Vector2i(x, z)) and not _water.has(Vector2i(x, z)):
 		e += _block_height
 	return e
 
@@ -351,6 +388,44 @@ func _spawn_holes() -> void:
 ## Is there a hole on this tile? The cat can't walk onto it, only jump over it.
 func has_hole(tile: Vector2i) -> bool:
 	return _holes.has(tile)
+
+# --- Water ----------------------------------------------------------------
+
+## Fill each water tile with a water cube on one flat surface (the lowest water
+## tile's top), so higher ground reads as banks. Crates float here; the cat can't.
+func _spawn_water() -> void:
+	if water_tiles.is_empty():
+		return
+	var scene: PackedScene = load("res://models/water.glb")
+	if scene == null:
+		push_warning("World: could not load water.glb")
+		return
+	# Surface sits just below the lowest tile top of the pond AND its banks, so it
+	# never rides above the surrounding terrain.
+	var min_elev := INF
+	var around := [Vector2i.ZERO, Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for t in water_tiles:
+		for d in around:
+			var n: Vector2i = t + d
+			if n.x >= 0 and n.x < grid_size and n.y >= 0 and n.y < grid_size:
+				min_elev = minf(min_elev, float(_heights[n.x][n.y]))
+	if is_inf(min_elev):
+		min_elev = 0.0
+	_water_surface = min_elev + 0.5 - water_surface_drop
+	for tile in water_tiles:
+		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
+			continue
+		if _water.has(tile):
+			continue
+		var node := scene.instantiate() as Node3D
+		# The water cube's top is at +0.5 locally; sit it so the top is at surface.
+		node.position = Vector3(tile.x * cell_size, _water_surface - 0.5, tile.y * cell_size)
+		_grid_root.add_child(node)
+		_water[tile] = node
+
+## Is there water on this tile? The cat can't walk onto or land on it.
+func has_water(tile: Vector2i) -> bool:
+	return _water.has(tile)
 
 # --- Pushable blocks ------------------------------------------------------
 
@@ -414,6 +489,8 @@ func _all_mesh_instances(node: Node, acc: Array = []) -> Array:
 ## Send every block back to the tile it started on (used by the Restart button).
 func reset_blocks() -> void:
 	_blocks.clear()
+	_block_water.clear()
+	_block_water_dir.clear()
 	for s in _block_starts:
 		var block: Node3D = s["block"]
 		var tile: Vector2i = s["tile"]
@@ -568,6 +645,8 @@ func find_path(start: Vector2i, goal: Vector2i) -> Array:
 func _path_walkable(tile: Vector2i) -> bool:
 	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 		return false
+	if _water.has(tile):
+		return _blocks.has(tile)     # only a floating crate is walkable
 	if _blocks.has(tile) or _holes.has(tile):
 		return false
 	for ball in _balls:
@@ -686,6 +765,10 @@ func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 	# A hole can't be walked onto (only jumped over).
 	if _holes.has(tile):
 		return false
+	# Water blocks the cat, unless a crate floats there — then it's a platform the
+	# cat walks onto (stands on top; a floating crate isn't pushed).
+	if _water.has(tile):
+		return _blocks.has(tile)
 	# A ball (rolling or resting): (re)shove it and step into the tile it vacates.
 	# If it can't move (obstacle right behind it), the cat is blocked too.
 	var ball := _ball_at(tile)
@@ -693,17 +776,31 @@ func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 		return _launch_ball(ball, dir)
 	if not _blocks.has(tile):
 		return true
-	var dest := tile + dir
-	# Must stay on the board and the destination must be empty.
-	if dest.x < 0 or dest.x >= grid_size or dest.y < 0 or dest.y >= grid_size:
+	# Gather the contiguous line of crates ahead, so a crate can shove others
+	# (e.g. deeper into water). `c` ends on the first free tile past the line.
+	var line: Array[Vector2i] = []
+	var c := tile
+	while _blocks.has(c):
+		line.append(c)
+		c += dir
+	# That free tile must be a valid crate destination (on-board, no hole/ball).
+	if c.x < 0 or c.x >= grid_size or c.y < 0 or c.y >= grid_size:
 		return false
-	if _blocks.has(dest) or not _ball_at(dest).is_empty():
+	if _holes.has(c) or not _ball_at(c).is_empty():
 		return false
-	# Update occupancy now; hand the slide off to the player for perfect sync.
-	var block: Node3D = _blocks[tile]
-	_blocks.erase(tile)
-	_blocks[dest] = block
-	return {"block": block, "from": block.position, "to": _block_world_pos(dest)}
+	# Shift the whole line one tile (far crate first so occupancy stays valid),
+	# and hand every slide to the player to drive in lockstep.
+	var pushes: Array = []
+	for i in range(line.size() - 1, -1, -1):
+		var from_tile: Vector2i = line[i]
+		var to_tile: Vector2i = from_tile + dir
+		var blk: Node3D = _blocks[from_tile]
+		_blocks.erase(from_tile)
+		_blocks[to_tile] = blk
+		if _water.has(to_tile):
+			_block_water_dir[blk.get_instance_id()] = dir   # for the entry-dive tip
+		pushes.append({"block": blk, "from": blk.position, "to": _block_world_pos(to_tile)})
+	return {"blocks": pushes}
 
 # --- Goal ----------------------------------------------------------------
 
@@ -908,8 +1005,34 @@ func _update_crate_heights(delta: float) -> void:
 		var b: Node3D = _blocks[tile]
 		var tx := roundi(b.position.x / cell_size)
 		var tz := roundi(b.position.z / cell_size)
-		var target_y := (get_elevation(tx, tz) + 0.5) - _block_bottom
-		b.position.y = lerpf(b.position.y, target_y, 1.0 - exp(-15.0 * delta))
+		var id := b.get_instance_id()
+		if _water.has(Vector2i(tx, tz)):
+			# Floating: a big bob on entry that decays to a gentle one, centred so
+			# the crate sits 0.1 m above the water surface.
+			var t: float = float(_block_water.get(id, 0.0)) + delta
+			_block_water[id] = t
+			var amp := water_bob_settle + (water_bob_amplitude - water_bob_settle) * exp(-water_bob_decay * t)
+			# Settle so the crate's TOP sits 0.1 m above the surface (mostly
+			# submerged), but never dip the top under the surface.
+			var off := maxf(amp * sin(TAU * water_bob_freq * t), -water_bob_max_dip)
+			var float_y := (_water_surface + 0.1) - (_block_bottom + _block_height)
+			# Ease toward the float+bob so the crate drops in fluidly (no snap).
+			b.position.y = lerpf(b.position.y, float_y + off, 1.0 - exp(-water_settle_rate * delta))
+			# Entry-dive tip in the shove direction, easing back to level.
+			var edir: Vector2i = _block_water_dir.get(id, Vector2i.ZERO)
+			var dive := water_dive_angle * exp(-water_dive_decay * t)
+			var er := Vector3.ZERO
+			if edir.x != 0:
+				er.z = float(edir.x) * dive
+			elif edir.y != 0:
+				er.x = float(edir.y) * dive
+			b.rotation = b.rotation.lerp(er, 1.0 - exp(-10.0 * delta))
+		else:
+			if _block_water.has(id):
+				_block_water.erase(id)          # left the water; reset the bob
+				_block_water_dir.erase(id)
+			var target_y := (get_elevation(tx, tz) + 0.5) - _block_bottom
+			b.position.y = lerpf(b.position.y, target_y, 1.0 - exp(-15.0 * delta))
 
 ## Toggle each goal by how much its triggering object (crate or ball) covers it.
 ## Triggers at ~40% coverage, releases below 30% (hysteresis avoids flicker).
