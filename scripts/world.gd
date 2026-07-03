@@ -93,6 +93,15 @@ const BIT_S := 8   # +Z
 @export var hint_outline_pulse_min: float = 0.60
 @export var hint_outline_pulse_period: float = 2.5
 
+@export_group("Day/Night")
+## Enable a gameplay-driven day/night cycle. Advance time with the 'cycle_time'
+## key (T) for testing.
+@export var day_night_enabled: bool = false
+## Seconds for the eased transition when time advances.
+@export var day_transition_time: float = 1.5
+## Ordered presets (morning -> night). Leave empty to use built-in defaults.
+@export var day_phases: Array[DayPhase] = []
+
 @export_group("Rolling Balls")
 ## Tiles (grid x, z) that start with a rollable ball on them.
 @export var ball_tiles: Array[Vector2i] = [Vector2i(7, 10)]
@@ -168,6 +177,11 @@ var _hint_cam_timer := 0.0
 @onready var _player: CharacterBody3D = $Player
 @onready var _sun: DirectionalLight3D = $Sun
 @onready var _camera: Camera3D = get_node_or_null("Camera")
+@onready var _world_env: WorldEnvironment = get_node_or_null("WorldEnvironment")
+
+# --- Day/night ---
+var _day_index := 0
+var _day_tween: Tween
 
 var _obstacle: Dictionary = {}   # cached map-feature blocked tiles (lazy)
 var _obstacle_built := false
@@ -202,6 +216,10 @@ func _ready() -> void:
 		_apply_keyhole()
 	if hint_ball_at_start and not _balls.is_empty():
 		_start_ball_hint()
+	if day_night_enabled:
+		if day_phases.is_empty():
+			day_phases = _default_day_phases()
+		_apply_phase(day_phases[_day_index], false)   # set the starting time instantly
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -955,6 +973,8 @@ func _process(delta: float) -> void:
 		_hint_cam_timer -= delta
 		if _hint_cam_timer <= 0.0 and _camera and _camera.has_method("release_focus"):
 			_camera.release_focus()
+	if day_night_enabled and Input.is_action_just_pressed("cycle_time"):
+		_advance_day()
 
 # --- Keyhole see-through --------------------------------------------------
 
@@ -1182,6 +1202,72 @@ func _clear_ball_hint() -> void:
 	_hint_cam_timer = 0.0
 	if _camera and _camera.has_method("release_focus"):
 		_camera.release_focus()
+
+# --- Day/night cycle -----------------------------------------------------
+
+## Advance to the next time of day and ease everything toward it.
+func _advance_day() -> void:
+	if day_phases.is_empty():
+		return
+	_day_index = (_day_index + 1) % day_phases.size()
+	_apply_phase(day_phases[_day_index], true)
+
+## Set (or tween) the sun and environment to a phase's look.
+func _apply_phase(phase: DayPhase, animate: bool) -> void:
+	var env: Environment = _world_env.environment if _world_env else null
+	if _day_tween and _day_tween.is_valid():
+		_day_tween.kill()
+	if not animate:
+		if _sun:
+			_sun.rotation_degrees = phase.sun_rotation
+			_sun.light_energy = phase.sun_energy
+			_sun.light_color = phase.sun_color
+		if env:
+			env.ambient_light_color = phase.ambient_color
+			env.ambient_light_energy = phase.ambient_energy
+			env.background_color = phase.sky_color
+		return
+	# Sunrise-style entry: snap the compass angle now (invisible while dark) so the
+	# sun rises in place on this side instead of sweeping the long way around.
+	if phase.snap_yaw_on_enter and _sun:
+		_sun.rotation_degrees.y = phase.sun_rotation.y
+	_day_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var t := day_transition_time
+	if _sun:
+		_day_tween.tween_property(_sun, "rotation_degrees", phase.sun_rotation, t)
+		_day_tween.tween_property(_sun, "light_energy", phase.sun_energy, t)
+		_day_tween.tween_property(_sun, "light_color", phase.sun_color, t)
+	if env:
+		_day_tween.tween_property(env, "ambient_light_color", phase.ambient_color, t)
+		_day_tween.tween_property(env, "ambient_light_energy", phase.ambient_energy, t)
+		_day_tween.tween_property(env, "background_color", phase.sky_color, t)
+
+## Built-in phases used when day_phases is left empty. Afternoon matches the
+## scene's default sun; morning mirrors it (sun low from the opposite side).
+func _default_day_phases() -> Array[DayPhase]:
+	var phases: Array[DayPhase] = []
+	# Morning snaps its yaw on entry, so night -> morning rises on the East side
+	# instead of the sun swinging all the way around.
+	phases.append(_mk_phase("Morning", Vector3(-20, 120, 0), 0.55, Color(1.0, 0.85, 0.7), Color(0.60, 0.64, 0.72), 0.50, Color(0.74, 0.66, 0.60), true))
+	phases.append(_mk_phase("Midday", Vector3(-78, -30, 0), 0.95, Color(1.0, 0.98, 0.95), Color(0.75, 0.80, 0.86), 0.60, Color(0.45, 0.64, 0.90)))
+	phases.append(_mk_phase("Afternoon", Vector3(-50, -55, 0), 0.85, Color(1.0, 0.95, 0.85), Color(0.70, 0.78, 0.85), 0.55, Color(0.50, 0.66, 0.86)))
+	phases.append(_mk_phase("Evening", Vector3(-12, -80, 0), 0.68, Color(1.0, 0.6, 0.36), Color(0.58, 0.48, 0.52), 0.55, Color(0.94, 0.55, 0.4)))
+	# Night sits low on the West (where it set), so evening -> night just dims in
+	# place; the swing to the East happens during the (dark) morning snap.
+	phases.append(_mk_phase("Night", Vector3(-6, -100, 0), 0.10, Color(0.55, 0.65, 1.0), Color(0.22, 0.28, 0.45), 0.32, Color(0.06, 0.09, 0.20)))
+	return phases
+
+func _mk_phase(label: String, rot: Vector3, energy: float, col: Color, amb: Color, amb_e: float, sky: Color, snap_yaw := false) -> DayPhase:
+	var p := DayPhase.new()
+	p.label = label
+	p.sun_rotation = rot
+	p.sun_energy = energy
+	p.sun_color = col
+	p.ambient_color = amb
+	p.ambient_energy = amb_e
+	p.sky_color = sky
+	p.snap_yaw_on_enter = snap_yaw
+	return p
 
 # --- Rolling balls -------------------------------------------------------
 
