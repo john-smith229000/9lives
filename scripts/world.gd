@@ -89,6 +89,9 @@ const BIT_S := 8   # +Z
 ## Outline colour and hull size (relative; 1.06 = 6% larger = thicker outline).
 @export var hint_outline_color: Color = Color(1.0, 0.92, 0.25)
 @export var hint_outline_scale: float = 1.06
+## Outline opacity pulse: dimmest alpha, and seconds per fade in+out cycle.
+@export var hint_outline_pulse_min: float = 0.60
+@export var hint_outline_pulse_period: float = 2.5
 
 @export_group("Rolling Balls")
 ## Tiles (grid x, z) that start with a rollable ball on them.
@@ -1166,7 +1169,7 @@ func _update_goal() -> void:
 ## ball is shoved (see _launch_ball); the camera pans back after hint_camera_hold.
 func _start_ball_hint() -> void:
 	_hint_ball_node = _balls[0]["node"]
-	Outline.add(_hint_ball_node, hint_outline_color, hint_outline_scale)
+	Outline.add(_hint_ball_node, hint_outline_color, hint_outline_scale, hint_outline_pulse_min, hint_outline_pulse_period)
 	if _camera and _camera.has_method("focus_on"):
 		_camera.focus_on(_hint_ball_node)
 		_hint_cam_timer = hint_camera_hold
