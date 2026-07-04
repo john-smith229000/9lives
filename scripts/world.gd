@@ -24,6 +24,20 @@ const BIT_S := 8   # +Z
 @export var ground_y: float = 1.0
 ## When false, skip generating the tile terrain (use a custom map mesh instead).
 @export var generate_terrain: bool = true
+## Replace the beveled terrain tiles with plain flat-coloured boxes (same size and
+## elevation). Simple, uniform look instead of the bevelled cube set.
+@export var plain_box_tiles: bool = false
+## Build the terrain as one continuous surface that slopes smoothly between tile
+## heights (no stepped cube faces). Takes precedence over plain_box_tiles. Grid
+## gameplay is unchanged; the surface just passes through each tile's height.
+@export var smooth_terrain: bool = false
+## Colour of the plain box / smooth terrain (the grassy top).
+@export var tile_color: Color = Color("6a9b47")
+## Colour of the smooth terrain's side-walls (the exposed dirt at edges, water and
+## holes).
+@export var terrain_side_color: Color = Color("5c4327")
+## How far the smooth terrain's side-walls drop below the lowest ground (m).
+@export var terrain_side_depth: float = 3.0
 ## Optional custom map node to auto-generate trimesh collision for (Scene 3).
 @export var map_path: NodePath
 ## Force the map's materials fully matte (rough, non-metallic, no specular) so the
@@ -84,6 +98,9 @@ const BIT_S := 8   # +Z
 @export var water_settle_rate: float = 5.0
 
 @export_group("Grass")
+## Grow grass on every generated ground tile (all the beveled terrain tiles),
+## except holes and water. Use this for procedural-terrain scenes with no map.
+@export var grass_on_all_tiles: bool = false
 ## Grow grass automatically wherever the map's painted colour matches (instead of
 ## listing tiles by hand). Samples the map's texture per tile.
 @export var grass_from_paint: bool = false
@@ -107,6 +124,9 @@ const BIT_S := 8   # +Z
 ## Per-blade height variation (0 = every blade the same height, 0.4 = ±40%). A
 ## ragged top surface reads far more natural than a uniform sheet of grass.
 @export_range(0.0, 0.9) var grass_height_variation: float = 0.35
+## How far (m) each tile's grass spills past its edges so neighbouring tiles
+## overlap and the seams between them fill in. ~0.15 hides the gaps.
+@export var grass_seam_overlap: float = 0.05
 ## Grass colour (the tips; roots are a touch darker).
 @export var grass_color: Color = Color("6a9b47")
 ## How much blade normals lean toward straight up (0 = raw mesh, 1 = fully up).
@@ -184,7 +204,7 @@ const BIT_S := 8   # +Z
 ## Circle size as a fraction of screen height.
 @export var keyhole_radius: float = 0.09
 ## Feather width at the circle's edge.
-@export var keyhole_softness: float = 0.04
+@export var keyhole_softness: float = 0.00
 ## Opacity at the center of the circle (0 = fully see-through). Low = clearest
 ## view of the cat; density ramps up toward the circle's edge.
 @export var keyhole_min_alpha: float = 0.04
@@ -211,6 +231,7 @@ var _keyhole_inside := false
 var _heights: Array = []
 var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
+var _box_tile_mesh: BoxMesh     # shared mesh+material for plain_box_tiles
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
 var _holes: Dictionary = {}     # Vector2i(tile) -> hole Node3D (jump-over gaps)
 var _water: Dictionary = {}     # Vector2i(tile) -> water Node3D
@@ -374,17 +395,24 @@ func _build_grid() -> void:
 			column[z] = _elevation_for(x, z) if generate_terrain else 0.0
 		_heights[x] = column
 
-	# Pass 2: place a matching beveled tile per cell (skipped for custom maps).
+	# Pass 2: place the ground (skipped for custom maps).
 	if generate_terrain:
-		for x in grid_size:
-			for z in grid_size:
-				if Vector2i(x, z) in hole_tiles or Vector2i(x, z) in water_tiles:
-					continue          # hole/water mesh replaces the ground cube here
-				_place_tile(x, z)
+		if smooth_terrain:
+			_build_smooth_terrain()
+		else:
+			for x in grid_size:
+				for z in grid_size:
+					if Vector2i(x, z) in hole_tiles or Vector2i(x, z) in water_tiles:
+						continue      # hole/water mesh replaces the ground cube here
+					_place_tile(x, z)
 
 func _place_tile(x: int, z: int) -> void:
 	var e: float = float(_heights[x][z])
 	var top := e + 0.5
+
+	if plain_box_tiles:
+		_place_box_tile(x, z, top)
+		return
 
 	# Which sides are free (neighbour missing or strictly lower).
 	var mask := 0
@@ -420,6 +448,120 @@ func _place_tile(x: int, z: int) -> void:
 	# Tiny X/Z overlap so flush neighbour walls don't z-fight.
 	container.scale = Vector3(1.01, 1.0, 1.01)
 	_grid_root.add_child(container)
+
+## Place a plain flat-coloured 1 m box in place of a bevelled tile. The mesh and
+## material are shared across every tile. `top` is the tile's surface height.
+func _place_box_tile(x: int, z: int, top: float) -> void:
+	if _box_tile_mesh == null:
+		_box_tile_mesh = BoxMesh.new()
+		_box_tile_mesh.size = Vector3(cell_size, 1.0, cell_size)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = tile_color
+		mat.roughness = 1.0
+		mat.metallic = 0.0
+		mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+		_box_tile_mesh.material = mat
+	var mi := MeshInstance3D.new()
+	mi.mesh = _box_tile_mesh
+	mi.position = Vector3(x * cell_size, top - 0.5, z * cell_size)
+	mi.scale = Vector3(1.01, 1.0, 1.01)   # tiny overlap so flush walls don't z-fight
+	_grid_root.add_child(mi)
+
+## Build the terrain as one continuous surface. Each tile gets a full-size top
+## quad from its four shared corner heights (so the ground covers whole tiles and
+## slopes smoothly between them), plus dirt side-walls dropped wherever it borders
+## the map edge, water, or a hole — so those read as banks/pits, not floating cuts.
+func _build_smooth_terrain() -> void:
+	var top := SurfaceTool.new()
+	top.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var wall := SurfaceTool.new()
+	wall.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var min_h := INF
+	for x in grid_size:
+		for z in grid_size:
+			min_h = minf(min_h, float(_heights[x][z]))
+	if is_inf(min_h):
+		min_h = 0.0
+	var base_y := min_h + 0.5 - terrain_side_depth   # how far the side-walls drop
+	for x in grid_size:
+		for z in grid_size:
+			if not _is_ground(x, z):
+				continue
+			# Smooth top quad (corners shared with neighbours -> continuous surface).
+			_tri(top, x, z, x, z + 1, x + 1, z + 1)
+			_tri(top, x, z, x + 1, z + 1, x + 1, z)
+			# Side-walls on edges facing a non-ground tile.
+			if not _is_ground(x - 1, z): _wall(wall, x, z + 1, x, z, base_y, Vector3(-1, 0, 0))
+			if not _is_ground(x + 1, z): _wall(wall, x + 1, z, x + 1, z + 1, base_y, Vector3(1, 0, 0))
+			if not _is_ground(x, z - 1): _wall(wall, x, z, x + 1, z, base_y, Vector3(0, 0, -1))
+			if not _is_ground(x, z + 1): _wall(wall, x + 1, z + 1, x, z + 1, base_y, Vector3(0, 0, 1))
+	_add_terrain_surface(top, tile_color)
+	_add_terrain_surface(wall, terrain_side_color)
+
+## True when a tile is on the grid and is neither a hole nor water (i.e. has ground).
+func _is_ground(x: int, z: int) -> bool:
+	if x < 0 or x >= grid_size or z < 0 or z >= grid_size:
+		return false
+	var t := Vector2i(x, z)
+	return not (t in hole_tiles) and not (t in water_tiles)
+
+## One top-surface triangle from three grid corners, with slope-following normals.
+func _tri(st: SurfaceTool, ax: int, az: int, bx: int, bz: int, cx: int, cz: int) -> void:
+	st.set_normal(_corner_normal(ax, az)); st.add_vertex(_corner_pos(ax, az))
+	st.set_normal(_corner_normal(bx, bz)); st.add_vertex(_corner_pos(bx, bz))
+	st.set_normal(_corner_normal(cx, cz)); st.add_vertex(_corner_pos(cx, cz))
+
+## A vertical wall quad from two top corners down to base_y, facing `n`.
+func _wall(st: SurfaceTool, ax: int, az: int, bx: int, bz: int, base_y: float, n: Vector3) -> void:
+	var ta := _corner_pos(ax, az)
+	var tb := _corner_pos(bx, bz)
+	var ba := Vector3(ta.x, base_y, ta.z)
+	var bb := Vector3(tb.x, base_y, tb.z)
+	for v in [ta, ba, bb, ta, bb, tb]:
+		st.set_normal(n)
+		st.add_vertex(v)
+
+## World position of grid corner (i, j) — the shared corner between up to four
+## tiles — at the average height of the ground tiles that meet there.
+func _corner_pos(i: int, j: int) -> Vector3:
+	return Vector3((i - 0.5) * cell_size, _corner_y(i, j), (j - 0.5) * cell_size)
+
+func _corner_y(i: int, j: int) -> float:
+	return _corner_y_or(i, j, 0.0)
+
+## Average surface height of the ground tiles meeting at corner (i, j); `fallback`
+## when none (used so edge normals don't get skewed by off-map corners).
+func _corner_y_or(i: int, j: int, fallback: float) -> float:
+	var sum := 0.0
+	var n := 0
+	for t in [Vector2i(i - 1, j - 1), Vector2i(i, j - 1), Vector2i(i - 1, j), Vector2i(i, j)]:
+		if _is_ground(t.x, t.y):
+			sum += _heights[t.x][t.y] + 0.5
+			n += 1
+	return sum / float(n) if n > 0 else fallback
+
+## Smooth up-facing normal from neighbouring corner heights.
+func _corner_normal(i: int, j: int) -> Vector3:
+	var c := _corner_y(i, j)
+	var dx := _corner_y_or(i - 1, j, c) - _corner_y_or(i + 1, j, c)
+	var dz := _corner_y_or(i, j - 1, c) - _corner_y_or(i, j + 1, c)
+	return Vector3(dx, 2.0 * cell_size, dz).normalized()
+
+## Commit a terrain SurfaceTool as a matte, double-sided MeshInstance of `col`.
+func _add_terrain_surface(st: SurfaceTool, col: Color) -> void:
+	var mesh := st.commit()
+	if mesh == null or mesh.get_surface_count() == 0:
+		return
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.roughness = 1.0
+	mat.metallic = 0.0
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	_grid_root.add_child(mi)
 
 func _is_free(top: float, nx: int, nz: int) -> bool:
 	var nt := _tile_top(nx, nz)
@@ -507,19 +649,15 @@ func _spawn_holes() -> void:
 	if scene == null:
 		push_warning("World: could not load hole.glb")
 		return
-	var min_elev := INF
-	for x in grid_size:
-		for z in grid_size:
-			min_elev = minf(min_elev, float(_heights[x][z]))
-	if is_inf(min_elev):
-		min_elev = 0.0
+	var mesh_top := _measure_top(scene)   # align the hole's rim to the ground surface
 	for tile in hole_tiles:
 		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 			continue
 		if _holes.has(tile):
 			continue
 		var node := scene.instantiate() as Node3D
-		node.position = Vector3(tile.x * cell_size, min_elev, tile.y * cell_size)
+		var surf := float(_heights[tile.x][tile.y]) + 0.5   # this tile's own top
+		node.position = Vector3(tile.x * cell_size, surf - mesh_top, tile.y * cell_size)
 		_grid_root.add_child(node)
 		_holes[tile] = node
 
@@ -572,7 +710,13 @@ func has_water(tile: Vector2i) -> bool:
 ## holds a single mesh, so there's one MultiMesh per blade variant. Blade height
 ## is measured from each model, so it isn't set by hand.
 func _spawn_grass() -> void:
-	var tiles: Array[Vector2i] = _grass_tiles_from_paint() if grass_from_paint else grass_tiles
+	var tiles: Array[Vector2i]
+	if grass_on_all_tiles:
+		tiles = _grass_all_ground_tiles()
+	elif grass_from_paint:
+		tiles = _grass_tiles_from_paint()
+	else:
+		tiles = grass_tiles
 	if tiles.is_empty():
 		return
 	var meshes := _blade_meshes()
@@ -588,12 +732,14 @@ func _spawn_grass() -> void:
 		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 			continue
 		var top := get_elevation(tile.x, tile.y) + 0.5
-		# Stratified placement: one blade per cell of a sub-grid across the tile
-		# (with jitter), so coverage is even instead of randomly clumped.
+		# Stratified placement over a region grown past the tile edges by
+		# grass_seam_overlap, so each tile's grass overlaps its neighbours and the
+		# seams between tiles fill in (no gaps, especially at high density).
 		var cols := maxi(int(ceil(sqrt(float(grass_per_tile)))), 1)
-		var sub := cell_size / float(cols)
-		var origin_x := tile.x * cell_size - cell_size * 0.5
-		var origin_z := tile.y * cell_size - cell_size * 0.5
+		var span := cell_size + 2.0 * grass_seam_overlap
+		var sub := span / float(cols)
+		var origin_x := tile.x * cell_size - cell_size * 0.5 - grass_seam_overlap
+		var origin_z := tile.y * cell_size - cell_size * 0.5 - grass_seam_overlap
 		for i in grass_per_tile:
 			var cx := origin_x + (float(i % cols) + 0.5) * sub
 			var cz := origin_z + (float(i / cols) + 0.5) * sub
@@ -603,10 +749,11 @@ func _spawn_grass() -> void:
 			var sy := grass_scale * maxf(0.3, 1.0 + rng.randf_range(-grass_height_variation, grass_height_variation))
 			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
 			t = t.scaled(Vector3(sxz, sy, sxz))
-			t.origin = Vector3(
-				cx + rng.randf_range(-0.5, 0.5) * sub * grass_jitter,
-				top,
-				cz + rng.randf_range(-0.5, 0.5) * sub * grass_jitter)
+			var wx := cx + rng.randf_range(-0.5, 0.5) * sub * grass_jitter
+			var wz := cz + rng.randf_range(-0.5, 0.5) * sub * grass_jitter
+			# Sit each blade on the actual (interpolated) surface so grass hugs
+			# slopes instead of stepping at tile centres.
+			t.origin = Vector3(wx, _grass_surface_y(wx, wz, top), wz)
 			(lists[rng.randi() % meshes.size()] as Array).append(t)
 	_grass_mats.clear()
 	_grass_mms.clear()
@@ -669,6 +816,31 @@ func _blade_meshes() -> Array:
 			break
 		inst.queue_free()
 	return out
+
+## Every generated ground tile (holes and water have no ground cube, so skip them).
+func _grass_all_ground_tiles() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for x in grid_size:
+		for z in grid_size:
+			var t := Vector2i(x, z)
+			if t in hole_tiles or t in water_tiles:
+				continue
+			out.append(t)
+	return out
+
+## Surface height at an arbitrary world XZ. On smooth terrain this bilinearly
+## interpolates the corner heights (so grass hugs the slope); otherwise the tile's
+## flat top (`fallback`) is used.
+func _grass_surface_y(wx: float, wz: float, fallback: float) -> float:
+	if not smooth_terrain:
+		return fallback
+	var tx := roundi(wx / cell_size)
+	var tz := roundi(wz / cell_size)
+	var u := clampf(wx / cell_size - float(tx) + 0.5, 0.0, 1.0)
+	var v := clampf(wz / cell_size - float(tz) + 0.5, 0.0, 1.0)
+	var a := lerpf(_corner_y(tx, tz), _corner_y(tx + 1, tz), u)
+	var b := lerpf(_corner_y(tx, tz + 1), _corner_y(tx + 1, tz + 1), u)
+	return lerpf(a, b, v)
 
 func _grass_material(blade_h: float) -> ShaderMaterial:
 	var m := ShaderMaterial.new()

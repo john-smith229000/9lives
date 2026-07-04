@@ -15,7 +15,7 @@ extends CharacterBody3D
 ## World Y the player's origin rides at (block top 0.5 + capsule half-height 0.5).
 @export var ground_y: float = 1.0
 ## Top gliding speed in tiles per second.
-@export var move_speed: float = 3.0
+@export var move_speed: float = 2.0
 ## How quickly speed ramps up/down. Higher = snappier ease in/out.
 @export var acceleration: float = 45.0
 ## Seconds to turn the model toward a new travel direction.

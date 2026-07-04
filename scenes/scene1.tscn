@@ -10,11 +10,13 @@ background_mode = 1
 background_color = Color(0.45, 0.62, 0.85, 1)
 ambient_light_source = 2
 ambient_light_color = Color(0.7, 0.78, 0.85, 1)
-ambient_light_energy = 0.55
+ambient_light_energy = 0.75
 
 [node name="World" type="Node3D" unique_id=820652228]
 script = ExtResource("1_world")
 noise_amplitude = 0.7
+smooth_terrain = true
+grass_on_all_tiles = true
 block_tiles = Array[Vector2i]([Vector2i(12, 10), Vector2i(12, 11)])
 hint_ball_at_start = true
 hole_tiles = Array[Vector2i]([Vector2i(10, 8)])
@@ -28,6 +30,7 @@ environment = SubResource("Env_main")
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=2109192586]
 light_energy = 0.7
 shadow_enabled = true
+shadow_opacity = 0.55
 
 [node name="Player" parent="." unique_id=1963340621 instance=ExtResource("2_player")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 10)
