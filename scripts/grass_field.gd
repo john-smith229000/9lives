@@ -17,23 +17,36 @@ var _blade_pos: PackedVector3Array = PackedVector3Array()
 var _bins: Dictionary = {}              # tile -> Array of blade ids near it
 var _active: Dictionary = {}            # blade id -> Vector3(bend, dir.x, dir.z) still recovering
 
+## Tile mode (scenes 1–4): one blade per sub-grid cell of each grass tile.
 func setup(world: World, player: Node3D, grid_root: Node3D, tiles: Array[Vector2i]) -> void:
 	_world = world
 	_player = player
 	_grid_root = grid_root
-	_scatter(tiles)
-
-## Scatter one blade per cell of a sub-grid across each tile (with jitter), split
-## randomly across the blade variants (one MultiMesh each). Blade height is
-## measured from each model. Each blade sits on the interpolated surface height.
-func _scatter(tiles: Array[Vector2i]) -> void:
 	var meshes := _blade_meshes()
 	if meshes.is_empty():
 		push_warning("GrassField: no blade meshes (models/blade1.glb ...) found — no grass.")
 		return
+	_build(meshes, _scatter_tiles(meshes, tiles))
+
+## Mesh mode (scene 5): scatter blades directly over world-space triangles (`tris`,
+## groups of 3) at `density` blades per m², so grass follows the surface exactly
+## with no per-tile gaps. Movement + bending stay tile-based (bins below).
+func setup_mesh(world: World, player: Node3D, grid_root: Node3D, tris: PackedVector3Array, density: float) -> void:
+	_world = world
+	_player = player
+	_grid_root = grid_root
+	var meshes := _blade_meshes()
+	if meshes.is_empty():
+		push_warning("GrassField: no blade meshes (models/blade1.glb ...) found — no grass.")
+		return
+	_build(meshes, _scatter_mesh(meshes, tris, density))
+
+## Fill one transform list per blade variant by scattering over the grass tiles
+## (with jitter), each blade on the tile's interpolated surface height.
+func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
 	var cell := _world.cell_size
 	var rng := RandomNumberGenerator.new()
-	var lists: Array = []                 # one transform list per blade variant
+	var lists: Array = []
 	for _m in meshes:
 		lists.append([])
 	for tile in tiles:
@@ -47,8 +60,6 @@ func _scatter(tiles: Array[Vector2i]) -> void:
 		for i in _world.grass_per_tile:
 			var cx := origin_x + (float(i % cols) + 0.5) * sub
 			var cz := origin_z + (float(i / cols) + 0.5) * sub
-			# Independent XZ and Y scale: vary height more than width so the top of
-			# the field is ragged (breaks the uniform-sheet / grid look).
 			var sxz := _world.grass_scale * rng.randf_range(0.85, 1.15)
 			var sy := _world.grass_scale * maxf(0.3, 1.0 + rng.randf_range(-_world.grass_height_variation, _world.grass_height_variation))
 			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
@@ -57,12 +68,57 @@ func _scatter(tiles: Array[Vector2i]) -> void:
 			var wz := cz + rng.randf_range(-0.5, 0.5) * sub * _world.grass_jitter
 			t.origin = Vector3(wx, _world.grass_surface_y(wx, wz, top), wz)
 			(lists[rng.randi() % meshes.size()] as Array).append(t)
+	return lists
+
+## Fill one transform list per blade variant by scattering uniformly over the mesh
+## triangles at `density` blades per m² (blades sit exactly on the surface).
+func _scatter_mesh(meshes: Array, tris: PackedVector3Array, density: float) -> Array:
+	var rng := RandomNumberGenerator.new()
+	var lists: Array = []
+	for _m in meshes:
+		lists.append([])
+	var n_tri := tris.size() / 3
+	for ti in n_tri:
+		var a := tris[ti * 3]
+		var b := tris[ti * 3 + 1]
+		var c := tris[ti * 3 + 2]
+		var n := int(round(0.5 * (b - a).cross(c - a).length() * density))
+		for _k in n:
+			var r1 := rng.randf()
+			var r2 := rng.randf()
+			if r1 + r2 > 1.0:
+				r1 = 1.0 - r1
+				r2 = 1.0 - r2
+			var sxz := _world.grass_scale * rng.randf_range(0.85, 1.15)
+			var sy := _world.grass_scale * maxf(0.3, 1.0 + rng.randf_range(-_world.grass_height_variation, _world.grass_height_variation))
+			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
+			t = t.scaled(Vector3(sxz, sy, sxz))
+			t.origin = a + (b - a) * r1 + (c - a) * r2
+			(lists[rng.randi() % meshes.size()] as Array).append(t)
+	return lists
+
+## Turn per-variant transform lists into MultiMeshInstances + the footprint bins.
+## Blades are bucketed into square chunks (grass_chunk_size tiles) per variant, so
+## each MultiMesh spans only its chunk and off-screen chunks get frustum-culled.
+func _build(meshes: Array, lists: Array) -> void:
+	var cell := _world.cell_size
+	var chunk := maxf(float(_world.grass_chunk_size) * cell, cell)
+	# One shared material per blade variant (reused across all of that variant's chunks).
 	for k in meshes.size():
-		var xforms: Array = lists[k]
-		if xforms.is_empty():
-			continue
+		_mats.append(_material(maxf((meshes[k] as Mesh).get_aabb().size.y, 0.01)))
+	# Bucket every transform by (chunk x, chunk z, blade variant).
+	var buckets: Dictionary = {}
+	for k in meshes.size():
+		for xf in (lists[k] as Array):
+			var pos: Vector3 = (xf as Transform3D).origin
+			var key := Vector3i(floori(pos.x / chunk), floori(pos.z / chunk), k)
+			var b: Array = buckets.get(key, [])
+			b.append(xf)
+			buckets[key] = b
+	for key in buckets:
+		var k: int = key.z
+		var xforms: Array = buckets[key]
 		var mesh: Mesh = meshes[k]
-		var blade_h: float = maxf(mesh.get_aabb().size.y, 0.01)
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_custom_data = true     # per-blade bend amount + push direction
@@ -87,13 +143,14 @@ func _scatter(tiles: Array[Vector2i]) -> void:
 		# default kills that jitter (grass still receives shadows from buildings).
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _world.grass_cast_shadows \
 			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		var mat := _material(blade_h)
-		mmi.material_override = mat
-		_mats.append(mat)
+		mmi.material_override = _mats[k]   # shared per-variant material
 		_mms.append(mm)
 		_grid_root.add_child(mmi)
 
-## The mesh from each of models/blade1.glb .. blade5.glb that exists.
+## The mesh from each of models/blade1.glb .. blade5.glb that exists, with its
+## node transform (Blender rotation/scale) baked into the geometry — so the raw
+## MultiMesh mesh is upright and correctly sized even if transforms weren't applied
+## on export (otherwise a rotated/oversized node makes the blades huge and sideways).
 func _blade_meshes() -> Array:
 	var out: Array = []
 	for i in range(1, 6):
@@ -104,11 +161,42 @@ func _blade_meshes() -> Array:
 		if scene == null:
 			continue
 		var inst := scene.instantiate()
-		for mi in _mesh_instances(inst):
-			out.append((mi as MeshInstance3D).mesh)
-			break
+		add_child(inst)                        # so global_transform resolves
+		var mesh: Mesh = null
+		for m in _mesh_instances(inst):
+			var mi := m as MeshInstance3D
+			if mi.mesh:
+				mesh = _bake_mesh(mi.mesh, mi.global_transform)
+				break
+		remove_child(inst)
 		inst.queue_free()
+		if mesh:
+			out.append(mesh)
 	return out
+
+## Return a new ArrayMesh with `xf` baked into surface 0's positions and normals.
+func _bake_mesh(mesh: Mesh, xf: Transform3D) -> ArrayMesh:
+	var src: Array = mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = src[Mesh.ARRAY_VERTEX]
+	var out_v := PackedVector3Array()
+	out_v.resize(verts.size())
+	for i in verts.size():
+		out_v[i] = xf * verts[i]
+	var arrs := []
+	arrs.resize(Mesh.ARRAY_MAX)
+	arrs[Mesh.ARRAY_VERTEX] = out_v
+	if src[Mesh.ARRAY_NORMAL] != null:
+		var nrm: PackedVector3Array = src[Mesh.ARRAY_NORMAL]
+		var out_n := PackedVector3Array()
+		out_n.resize(nrm.size())
+		for i in nrm.size():
+			out_n[i] = (xf.basis * nrm[i]).normalized()
+		arrs[Mesh.ARRAY_NORMAL] = out_n
+	if src[Mesh.ARRAY_INDEX] != null:
+		arrs[Mesh.ARRAY_INDEX] = src[Mesh.ARRAY_INDEX]
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrs)
+	return am
 
 func _material(blade_h: float) -> ShaderMaterial:
 	var m := ShaderMaterial.new()

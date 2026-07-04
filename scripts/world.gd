@@ -44,6 +44,20 @@ const BIT_S := 8   # +Z
 ## Force the map's materials fully matte (rough, non-metallic, no specular) so the
 ## ground has no shine/reflection.
 @export var matte_ground: bool = false
+## Sample the map mesh's surface height per tile so the cat walks up/down the
+## terrain (instead of a flat custom map). Read from the mesh geometry at load.
+@export var follow_map_height: bool = false
+## Only tiles that lie over the map mesh are walkable — everything else (open sea,
+## off-map) is blocked. Uses the same map-mesh scan as follow_map_height.
+@export var confine_to_land: bool = false
+## Water line for confine_to_land: land whose surface is above this Y is walkable
+## (grass + beach); anything below (the underwater seafloor) is blocked. Lower it if
+## the cat can't reach the beach; raise it if the cat walks out onto the sea floor.
+@export var sea_level: float = 0.0
+## Scatter grass directly on the map's green (grass) surface geometry — density is
+## grass_per_tile blades per m². Follows the mesh with no per-tile gaps; use this
+## for a coloured-material map (scene 5) instead of grass_from_paint's tile grid.
+@export var grass_on_map_surface: bool = false
 ## Optional node holding the buildings (separate meshes). When set, the keyhole
 ## see-through is applied ONLY to these meshes (so the map/floor stays solid),
 ## and trimesh collision is generated for them so the cat routes around them.
@@ -115,13 +129,16 @@ const BIT_S := 8   # +Z
 ## Tiles (grid x, z) that get grass — used only when grass_from_paint is off.
 @export var grass_tiles: Array[Vector2i] = []
 ## Tufts scattered per grass tile.
-@export var grass_per_tile: int = 120
+@export var grass_per_tile: int = 150
+## Grass is split into square chunks this many tiles across, each its own
+## MultiMesh, so off-screen chunks are frustum-culled (big win on large maps).
+@export var grass_chunk_size: int = 16
 ## How far each blade wanders within its slot on the tile (0 = perfect grid,
 ## 1 = can reach neighbouring slots). Push toward 1 to break up the grid look.
 @export var grass_jitter: float = 1.0
 ## Overall size multiplier on the model's native size (lower this if the tuft
 ## imported bigger than you want; 1.0 = original size).
-@export var grass_scale: float = 0.14
+@export var grass_scale: float = 0.8
 ## Per-blade height variation (0 = every blade the same height, 0.4 = ±40%). A
 ## ragged top surface reads far more natural than a uniform sheet of grass.
 @export_range(0.0, 0.9) var grass_height_variation: float = 0.35
@@ -134,8 +151,8 @@ const BIT_S := 8   # +Z
 ## swaying blades cause in the directional shadow map (grass still receives them).
 @export var grass_cast_shadows: bool = false
 ## Wind tip-sway distance (m) and speed.
-@export var grass_wind_strength: float = 0.18
-@export var grass_wind_speed: float = 1.8
+@export var grass_wind_strength: float = 0.1
+@export var grass_wind_speed: float = 0.8
 ## How out-of-phase neighbouring blades are. Higher makes the field ripple against
 ## itself (very visible) instead of leaning as one block.
 @export var grass_sway_scale: float = 1.3
@@ -151,7 +168,7 @@ const BIT_S := 8   # +Z
 ## camera angle (unlike a backlight glow, which needs to face the sun).
 @export_range(0.0, 1.0) var grass_shadow_lift: float = 0.5
 ## How far flattened blades push over.
-@export var grass_bend_strength: float = 2.0
+@export var grass_bend_strength: float = 0.4
 ## Seconds a flattened blade takes to spring back upright after the cat leaves.
 ## Each blade fades on its own timer, so higher = a longer-lingering wake.
 @export var grass_recovery: float = 3.5
@@ -221,6 +238,9 @@ var _heights: Array = []
 var _noise: FastNoiseLite
 var _defs: Array = []           # [{scene, mask, top}]
 var _box_tile_mesh: BoxMesh     # shared mesh+material for plain_box_tiles
+var _land: Dictionary = {}      # tile -> true, tiles that lie over the map mesh (scene 5)
+var _land_scanned := false
+var _grass_tris: PackedVector3Array = PackedVector3Array()   # green-surface world triangles
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
 var _holes: Dictionary = {}     # Vector2i(tile) -> hole Node3D (jump-over gaps)
 var _water: Dictionary = {}     # Vector2i(tile) -> water Node3D
@@ -258,6 +278,7 @@ const _GRASS_FIELD_SCRIPT := "res://scripts/grass_field.gd"
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
 @onready var _sun: DirectionalLight3D = $Sun
+@onready var _fill: DirectionalLight3D = get_node_or_null("Fill")
 @onready var _camera: Camera3D = get_node_or_null("Camera")
 @onready var _world_env: WorldEnvironment = get_node_or_null("WorldEnvironment")
 
@@ -270,6 +291,10 @@ var _obstacle_built := false
 func _ready() -> void:
 	if _sun:
 		_sun.rotation_degrees = Vector3(-50.0, -55.0, 0.0)
+	# Fill light from a different angle (no shadows) so surfaces in the sun's cast
+	# shadow still get directional shading instead of flat ambient.
+	if _fill:
+		_fill.rotation_degrees = Vector3(-55.0, 130.0, 0.0)
 	_build_grid()
 	_build_map_collision()
 	_build_buildings_collision()
@@ -401,6 +426,10 @@ func _build_grid() -> void:
 					if Vector2i(x, z) in hole_tiles or Vector2i(x, z) in water_tiles:
 						continue      # hole/water mesh replaces the ground cube here
 					_place_tile(x, z)
+
+	# Custom map (scene 5): read walkable extent + per-tile height + grass triangles.
+	if not generate_terrain and (confine_to_land or follow_map_height or grass_on_map_surface):
+		_scan_map_surface()
 
 func _place_tile(x: int, z: int) -> void:
 	var e: float = float(_heights[x][z])
@@ -602,6 +631,103 @@ func _elevation_for(x: int, z: int) -> float:
 		ev = roundf(ev / height_step) * height_step
 	return ev
 
+## Scan the map (land) mesh once, rasterising every surface's triangles into the
+## tiles they cover. Sets each tile's height (`_heights`) from the topmost covering
+## surface (so movement follows the terrain), marks tiles above `sea_level` walkable
+## (`_land`, only used when confine_to_land is on), and collects the greenest
+## ("grass") surface's world triangles (`_grass_tris`) for mesh-scattered grass.
+func _scan_map_surface() -> void:
+	if _land_scanned:
+		return
+	var map := get_node_or_null(map_path)
+	if map == null:
+		push_warning("World: confine_to_land / follow_map_height need a map_path.")
+		return
+	var mi: MeshInstance3D = null
+	for m in _all_mesh_instances(map):
+		mi = m
+		break
+	if mi == null or mi.mesh == null:
+		return
+	_land_scanned = true
+	var xf: Transform3D = mi.global_transform
+	# The greenest-material surface is the grass (only it grows grass blades).
+	var grass_surf := -1
+	var greenest := -1000.0
+	for s in mi.mesh.get_surface_count():
+		var sm: Material = mi.get_active_material(s)
+		if sm is BaseMaterial3D:
+			var col: Color = (sm as BaseMaterial3D).albedo_color
+			var g := col.g - maxf(col.r, col.b)
+			if g > greenest:
+				greenest = g
+				grass_surf = s
+	var got: Dictionary = {}                # tiles whose height has been set (take the top)
+	for s in mi.mesh.get_surface_count():
+		var arr: Array = mi.mesh.surface_get_arrays(s)
+		var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		if verts.is_empty():
+			continue
+		var idx := PackedInt32Array()
+		if arr[Mesh.ARRAY_INDEX] != null:
+			idx = arr[Mesh.ARRAY_INDEX]
+		var wv := PackedVector3Array()
+		wv.resize(verts.size())
+		for i in verts.size():
+			wv[i] = xf * verts[i]
+		var is_grass := grass_on_map_surface and s == grass_surf
+		var tri_n: int = (idx.size() / 3) if idx.size() > 0 else (verts.size() / 3)
+		for ti in tri_n:
+			var i0: int
+			var i1: int
+			var i2: int
+			if idx.size() > 0:
+				i0 = idx[ti * 3]; i1 = idx[ti * 3 + 1]; i2 = idx[ti * 3 + 2]
+			else:
+				i0 = ti * 3; i1 = ti * 3 + 1; i2 = ti * 3 + 2
+			var a := wv[i0]
+			var b := wv[i1]
+			var c := wv[i2]
+			# Grass is scattered directly on the green surface's triangles (mesh mode).
+			if is_grass:
+				_grass_tris.append(a); _grass_tris.append(b); _grass_tris.append(c)
+			var tx0 := maxi(int(ceil(minf(a.x, minf(b.x, c.x)) / cell_size)), 0)
+			var tx1 := mini(int(floor(maxf(a.x, maxf(b.x, c.x)) / cell_size)), grid_size - 1)
+			var tz0 := maxi(int(ceil(minf(a.z, minf(b.z, c.z)) / cell_size)), 0)
+			var tz1 := mini(int(floor(maxf(a.z, maxf(b.z, c.z)) / cell_size)), grid_size - 1)
+			var e0 := Vector2(b.x - a.x, b.z - a.z)
+			var e1 := Vector2(c.x - a.x, c.z - a.z)
+			var d00 := e0.dot(e0)
+			var d01 := e0.dot(e1)
+			var d11 := e1.dot(e1)
+			var denom := d00 * d11 - d01 * d01
+			if absf(denom) < 0.0000001:
+				continue
+			for tx in range(tx0, tx1 + 1):
+				for tz in range(tz0, tz1 + 1):
+					var e2 := Vector2(tx * cell_size - a.x, tz * cell_size - a.z)
+					var d20 := e2.dot(e0)
+					var d21 := e2.dot(e1)
+					var vv := (d11 * d20 - d01 * d21) / denom
+					var ww := (d00 * d21 - d01 * d20) / denom
+					var uu := 1.0 - vv - ww
+					if uu < -0.01 or vv < -0.01 or ww < -0.01:
+						continue                # tile centre isn't inside this triangle
+					var y := uu * a.y + vv * b.y + ww * c.y
+					var t := Vector2i(tx, tz)
+					# Height everywhere there's land mesh, so movement follows the
+					# terrain even into the shallows; walkability (confine, if used)
+					# still respects the water line.
+					if follow_map_height:
+						var elev := y - 0.5
+						if not got.has(t):
+							_heights[tx][tz] = elev
+							got[t] = true
+						elif elev > float(_heights[tx][tz]):
+							_heights[tx][tz] = elev   # keep the topmost surface
+					if y >= sea_level:
+						_land[t] = true
+
 ## Elevation (meters) of a tile's top surface above the base. Used by the player.
 ## Includes the goal pad's current height so the cat / crate stand on top of it.
 func get_elevation(x: int, z: int) -> float:
@@ -708,6 +834,16 @@ func has_water(tile: Vector2i) -> bool:
 ## Pick the grass tiles (from paint, all-ground, or the explicit list) and hand
 ## them to a GrassField node, which owns the blades and the footprint interaction.
 func _spawn_grass() -> void:
+	# Mesh mode (scene 5): scatter grass directly on the green surface's triangles.
+	if grass_on_map_surface:
+		if _grass_tris.is_empty():
+			return
+		_grass = load(_GRASS_FIELD_SCRIPT).new()
+		_grass.name = "GrassField"
+		add_child(_grass)
+		_grass.setup_mesh(self, _player, _grid_root, _grass_tris, float(grass_per_tile))
+		return
+	# Tile mode (scenes 1–4): grass on grid tiles.
 	var tiles: Array[Vector2i]
 	if grass_on_all_tiles:
 		tiles = _grass_all_ground_tiles()
@@ -1073,6 +1209,8 @@ func find_path(start: Vector2i, goal: Vector2i) -> Array:
 func _path_walkable(tile: Vector2i) -> bool:
 	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 		return false
+	if confine_to_land and not _land.has(tile):
+		return false
 	if _water.has(tile):
 		return _blocks.has(tile)     # only a floating crate is walkable
 	if _blocks.has(tile) or _holes.has(tile):
@@ -1095,8 +1233,11 @@ func _ensure_obstacles() -> void:
 	_obstacle_built = true
 	for x in grid_size:
 		for z in grid_size:
-			if _player.is_tile_blocked(Vector2i(x, z)):
-				_obstacle[Vector2i(x, z)] = true
+			var t := Vector2i(x, z)
+			if confine_to_land and not _land.has(t):
+				continue                       # no walls out on the sea — skip it
+			if _player.is_tile_blocked(t):
+				_obstacle[t] = true
 
 # --- Background NPC (obstacle map is shared; the NpcDirector node does the rest) --
 
@@ -1114,6 +1255,9 @@ func is_map_obstacle(tile: Vector2i) -> bool:
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
 ## being pushed — the player then slides that block in lockstep with itself.
 func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
+	# Off the land (open sea / off-map) is never walkable.
+	if confine_to_land and not _land.has(tile):
+		return false
 	# A hole can't be walked onto (only jumped over).
 	if _holes.has(tile):
 		return false

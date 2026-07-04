@@ -62,3 +62,8 @@ text = "Scene 3"
 custom_minimum_size = Vector2(220, 56)
 layout_mode = 2
 text = "Scene 4"
+
+[node name="Scene5" type="Button" parent="Center/Panel"]
+custom_minimum_size = Vector2(220, 56)
+layout_mode = 2
+text = "Scene 5"

@@ -33,3 +33,8 @@ target_path = NodePath("../Player")
 ortho_size = 6.0
 
 [node name="PauseMenu" parent="." instance=ExtResource("4_menu")]
+
+[node name="Fill" type="DirectionalLight3D" parent="."]
+light_color = Color(0.72, 0.8, 1, 1)
+light_energy = 0.35
+shadow_enabled = false

@@ -68,8 +68,8 @@ func _default_phases() -> Array[DayPhase]:
 	# Morning snaps its yaw on entry, so night -> morning rises on the East side
 	# instead of the sun swinging all the way around.
 	phases.append(_mk_phase("Morning", Vector3(-20, 120, 0), 0.55, Color(1.0, 0.85, 0.7), Color(0.60, 0.64, 0.72), 0.50, Color(0.74, 0.66, 0.60), true))
-	phases.append(_mk_phase("Midday", Vector3(-78, -30, 0), 0.65, Color(1.0, 0.98, 0.95), Color(0.75, 0.80, 0.86), 0.60, Color(0.45, 0.64, 0.90)))
-	phases.append(_mk_phase("Afternoon", Vector3(-50, -55, 0), 0.85, Color(1.0, 0.95, 0.85), Color(0.70, 0.78, 0.85), 0.55, Color(0.50, 0.66, 0.86)))
+	phases.append(_mk_phase("Midday", Vector3(-78, -30, 0), 0.25, Color(1.0, 0.98, 0.95), Color(0.75, 0.80, 0.86), 0.60, Color(0.45, 0.64, 0.90)))
+	phases.append(_mk_phase("Afternoon", Vector3(-50, -55, 0), 0.2, Color(1.0, 0.95, 0.85), Color(0.70, 0.78, 0.85), 0.55, Color(0.50, 0.66, 0.86)))
 	phases.append(_mk_phase("Evening", Vector3(-12, -80, 0), 0.68, Color(1.0, 0.6, 0.36), Color(0.58, 0.48, 0.52), 0.55, Color(0.94, 0.55, 0.4)))
 	# Night sits low on the West (where it set), so evening -> night just dims in
 	# place; the swing to the East happens during the (dark) morning snap.
