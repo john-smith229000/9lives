@@ -1,19 +1,15 @@
-[gd_scene format=3 uid="uid://cvk3duecn2r40"]
+[gd_scene load_steps=3 format=3 uid="uid://cvk3duecn2r40"]
 
-[ext_resource type="Script" uid="uid://x03uvgy7onh6" path="res://scripts/world.gd" id="1_world"]
-[ext_resource type="PackedScene" uid="uid://opda3a6ugedf" path="res://scenes/player.tscn" id="2_player"]
-[ext_resource type="Script" uid="uid://dq5y7pmy6pcj3" path="res://scripts/iso_camera.gd" id="3_camera"]
-[ext_resource type="PackedScene" uid="uid://ig8xbmuvawmv" path="res://scenes/pause_menu.tscn" id="4_menu"]
+[ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
 
-[sub_resource type="Environment" id="Env_main"]
+[sub_resource type="Environment" id="Env_s1"]
 background_mode = 1
 background_color = Color(0.45, 0.62, 0.85, 1)
 ambient_light_source = 2
 ambient_light_color = Color(0.7, 0.78, 0.85, 1)
 ambient_light_energy = 0.75
 
-[node name="World" type="Node3D" unique_id=820652228]
-script = ExtResource("1_world")
+[node name="World" instance=ExtResource("1_base")]
 noise_amplitude = 0.7
 smooth_terrain = true
 grass_on_all_tiles = true
@@ -22,25 +18,18 @@ hint_ball_at_start = true
 hole_tiles = Array[Vector2i]([Vector2i(10, 8)])
 water_tiles = Array[Vector2i]([Vector2i(13, 9), Vector2i(14, 9), Vector2i(15, 9), Vector2i(13, 10), Vector2i(14, 10), Vector2i(15, 10), Vector2i(13, 11), Vector2i(14, 11), Vector2i(15, 11)])
 
-[node name="Grid" type="Node3D" parent="." unique_id=982546119]
+[node name="WorldEnvironment" parent="." index="1"]
+environment = SubResource("Env_s1")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=215434846]
-environment = SubResource("Env_main")
-
-[node name="Sun" type="DirectionalLight3D" parent="." unique_id=2109192586]
+[node name="Sun" parent="." index="2"]
 light_energy = 0.7
-shadow_enabled = true
 shadow_opacity = 0.55
 
-[node name="Player" parent="." unique_id=1963340621 instance=ExtResource("2_player")]
+[node name="Player" parent="." index="3"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 1, 10)
 block_tilt_extra = 1.5
 
-[node name="Camera" type="Camera3D" parent="." unique_id=533149016]
-script = ExtResource("3_camera")
-target_path = NodePath("../Player")
+[node name="Camera" parent="." index="4"]
 ortho_size = 5.0
 zoom_min = 2.0
 zoom_step = 2.0
-
-[node name="PauseMenu" parent="." unique_id=643578152 instance=ExtResource("4_menu")]

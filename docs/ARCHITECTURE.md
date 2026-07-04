@@ -11,8 +11,8 @@ A short map of how the project fits together, so future changes are easy to plac
 
 ## Entry point & scene flow
 
-- Main scene (see `project.godot`): `scenes/start_menu.tscn` → `start_menu.gd` buttons call `change_scene_to_file` to load `scene1`–`scene4`.
-- Every level scene is the same shape: a **World** node (`world.gd`) + **Player** (`player.tscn`) + **Camera** (`iso_camera.gd`) + **PauseMenu** (`pause_menu.tscn`).
+- Main scene (see `project.godot`): `scenes/start_menu.tscn`. The menu buttons and the pause menu route through the **`SceneManager`** autoload (`goto_level`, `goto_menu`, …) — the single place that loads scenes.
+- **All four levels inherit from `scenes/level_base.tscn`** (Godot scene inheritance). The base holds the shared skeleton — **World** (`world.gd`) + **Grid** + **WorldEnvironment** + **Sun** + **Player** (`player.tscn`) + **Camera** (`iso_camera.gd`) + **PauseMenu** — with neutral defaults. Each `sceneN.tscn` only stores its *deltas*: World's config exports, any Sun/Camera/Player/Environment value that differs from the base, and its own extra nodes (map/house/buildings).
 - `scene1` — procedural terrain (smooth mesh), grass everywhere, a water pond, a jump-over hole, pushable crates, a ball.
 - `scene2` — a house (`house1.tscn` + `house_controller.gd` doorway trigger) with the keyhole see-through effect.
 - `scene3` — custom map + buildings (`scene3_*.glb`), a background NPC that roams.
@@ -22,14 +22,30 @@ A short map of how the project fits together, so future changes are easy to plac
 
 | Script | Role |
 |---|---|
-| `world.gd` | The hub for a level. Builds the board, spawns everything (terrain, crates, ball, hole, water, grass, goal, NPC), runs day/night and the keyhole effect, and wires the player. Large; organized by `# --- Section ---` headers. |
-| `player.gd` | Grid-tile movement, jumping/mounting, pushing crates. Scene-agnostic — it asks the World about the world through *providers* (see below). |
+| `world.gd` | `class_name World`. The hub for a level: builds the board (terrain/tiles), owns the movement rules (`can_enter`, pushing, click-to-move pathing), crates/water, the goal, holes, balls, and wires the player. Delegates self-contained subsystems to the runtime component nodes below. |
+| `player.gd` | Grid-tile movement, jumping/mounting, pushing crates. Scene-agnostic — it asks the World through *providers* (see below). |
 | `iso_camera.gd` | Isometric follow camera with a `focus_on()` / `release_focus()` override (used by hints). |
-| `npc.gd` | Background character that wanders a scene avoiding buildings. |
+| `npc.gd` | The roaming background character itself (movement + walk animation). Gets its nav from `NpcDirector`. |
 | `outline.gd` | Reusable `class_name Outline` — inverted-hull outline used to highlight an object. |
 | `day_phase.gd` | `class_name DayPhase` resource: one preset (sun angle/energy/color, ambient, sky) for the day/night cycle. |
 | `house_controller.gd` | Doorway trigger for the scene 2 house. |
-| `pause_menu.gd`, `start_menu.gd` | UI. |
+| `scene_manager.gd` | `SceneManager` **autoload**. Owns all scene loading/transitions (`goto_level`, `goto_menu`, `goto_next_level`, `reload`); always unpauses first. |
+| `pause_menu.gd`, `start_menu.gd` | UI; both route scene changes through `SceneManager`. |
+
+### Adding a new level
+
+Create it as an **inherited scene** of `level_base.tscn` (Scene ▸ New Inherited Scene), set the World config exports + add any map/props, and add its path to `SceneManager.LEVELS`. No node structure to copy.
+
+### Runtime component nodes (spawned by World)
+
+Each of these is its own script that World instantiates as a child in `_ready()` when the relevant feature is enabled. The **config exports stay on the World node** (so the scenes are configured exactly as before) and are read by the component through a reference to World; the component owns that feature's state and its own `_process`. This is what keeps `world.gd` focused on the board itself.
+
+| Script | Created when | Owns |
+|---|---|---|
+| `day_night.gd` (`DayNightCycle`) | `day_night_enabled` | The Sun + WorldEnvironment easing through `DayPhase` presets; the `T` (cycle_time) key. |
+| `keyhole_effect.gd` (`KeyholeEffect`) | `enable_keyhole` | See-through building materials + the per-frame occlusion test. World supplies the building roots via `_keyhole_roots()`. |
+| `npc_director.gd` (`NpcDirector`) | `npc_enabled` | Spawns the NPC; owns its walkable-tile set + BFS pathfinding. Queries World's shared obstacle map (`ensure_obstacle_map` / `is_map_obstacle`). |
+| `grass_field.gd` (`GrassField`) | grass tiles exist | Blade scatter (MultiMeshes), the wind material, and the per-blade footprint interaction. World picks the tiles + supplies `grass_surface_y()`. |
 
 ## The provider pattern (how Player talks to World)
 
@@ -73,8 +89,10 @@ This keeps the Player identical across all four levels.
 
 ## `world.gd` section map
 
-State and spawners are grouped under headers: Goals, Balls, Hint, Grass, Day/night (state near the top); then Holes, Water, Grass (blades), Pushable blocks, Click-to-move, Background NPC, Goal, Keyhole see-through, Hint spotlight, Day/night cycle, Rolling balls.
+Grouped under `# --- Section ---` headers: terrain build (grid + beveled/box/smooth tiles), Holes, Water, Grass (tile selection only — blades live in `GrassField`), Pushable blocks + crate/water floating, Click-to-move + `can_enter` movement rules, Background NPC (obstacle-map accessors), Goal pads, Keyhole roots, Rolling balls, Hint spotlight.
 
-## If `world.gd` keeps growing
+## What's been modularized (and what's left)
 
-It's a deliberate hub, but if it gets unwieldy the safe path is to extract one self-contained subsystem at a time into a child-node component script (candidates, roughly independent: grass, day/night, keyhole, NPC, water+crates), moving its state and `_process` slice with it — and testing in Godot between each extraction. Avoid doing several at once.
+The self-contained subsystems have been pulled into the runtime component nodes above (day/night, keyhole, NPC, grass), taking `world.gd` from ~2000 to ~1570 lines. What remains in `world.gd` is the **cohesive core board logic**: terrain generation, the tile grid, the movement/pushing rules (`can_enter`), crates + water floating, the goal, holes, and balls. These are tightly interwoven (they all read/mutate the same tile/height/block state and feed the player's movement), so they're best kept together rather than split further.
+
+If a future feature is genuinely independent, follow the same pattern: a new component script that World spawns in `_ready`, with config exports staying on World, and test in Godot after wiring it.

@@ -40,6 +40,4 @@ func _on_restart_pressed() -> void:
 	_close()
 
 func _on_main_menu_pressed() -> void:
-	# Always unpause before switching scenes, or the new scene starts frozen.
-	get_tree().paused = false
-	get_tree().change_scene_to_file("res://scenes/start_menu.tscn")
+	SceneManager.goto_menu()   # unpauses, then switches to the menu

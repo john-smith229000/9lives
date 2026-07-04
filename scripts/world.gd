@@ -1,3 +1,4 @@
+class_name World
 extends Node3D
 ## Builds the board from a beveled-tile set. Each tile picks the mesh + rotation
 ## that matches which of its edges are "free" (neighbour missing or lower), so
@@ -213,17 +214,8 @@ const BIT_S := 8   # +Z
 ## Good value: roughly 0.5–0.7 * keyhole_radius.
 @export var keyhole_clear_radius: float = 0.14
 
-const _KEYHOLE_SHADER: Shader = preload("res://shaders/keyhole.gdshader")
-const _NPC_SCENE: PackedScene = preload("res://scenes/npc.tscn")
-var _npc_spawned := false
-var _npc_walk_set: Dictionary = {}   # Vector2i -> true, tiles the NPC may stand on
-var _npc_walk_list: Array[Vector2i] = []   # same tiles, for random picks
-# One entry per building mesh: {node, mats:[ShaderMaterial], aabb:AABB, active:float}.
-# `active` eases toward 1 while the building sits between the camera and the cat.
-var _keyhole_buildings: Array = []
-# While inside (free mode) we strip the keyhole materials so the building renders
-# with its original material (spotlight, culling, etc. all behave normally).
-var _keyhole_inside := false
+var _npc: NpcDirector                # runtime controller (see npc_director.gd)
+var _keyhole: KeyholeEffect          # runtime controller (see keyhole_effect.gd)
 
 var _heights: Array = []
 var _noise: FastNoiseLite
@@ -257,14 +249,11 @@ var _hint_ball_node: Node3D = null
 var _hint_cam_timer := 0.0
 
 # --- Grass ---
-var _grass_mats: Array[ShaderMaterial] = []   # one per blade mesh
-var _grass_mms: Array = []                    # the MultiMeshes (for writing per-blade custom data)
-# Per-blade bookkeeping (indexed by a global blade id).
-var _grass_blade_mm: PackedInt32Array = PackedInt32Array()   # which MultiMesh
-var _grass_blade_idx: PackedInt32Array = PackedInt32Array()  # instance index inside it
-var _grass_blade_pos: PackedVector3Array = PackedVector3Array()
-var _grass_bins: Dictionary = {}              # tile -> Array of blade ids near it
-var _grass_active: Dictionary = {}            # blade id -> Vector3(bend, dir.x, dir.z) for blades still recovering
+# Typed as Node (not GrassField) and loaded at runtime, so World doesn't reference
+# the GrassField class at parse time — GrassField references World back, and a
+# compile-time cycle would stop GrassField from registering.
+var _grass: Node                # runtime controller (see grass_field.gd)
+const _GRASS_FIELD_SCRIPT := "res://scripts/grass_field.gd"
 
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
@@ -273,8 +262,7 @@ var _grass_active: Dictionary = {}            # blade id -> Vector3(bend, dir.x,
 @onready var _world_env: WorldEnvironment = get_node_or_null("WorldEnvironment")
 
 # --- Day/night ---
-var _day_index := 0
-var _day_tween: Tween
+var _day_night: DayNightCycle   # runtime controller (see day_night.gd)
 
 var _obstacle: Dictionary = {}   # cached map-feature blocked tiles (lazy)
 var _obstacle_built := false
@@ -309,13 +297,24 @@ func _ready() -> void:
 		_player_start = _player.global_position
 	_setup_click_catcher()
 	if enable_keyhole:
-		_apply_keyhole()
+		_keyhole = KeyholeEffect.new()
+		_keyhole.name = "KeyholeEffect"
+		add_child(_keyhole)
+		_keyhole.setup(_camera, _player, _keyhole_roots(),
+			keyhole_radius, keyhole_softness, keyhole_min_alpha, keyhole_depth_bias, keyhole_clear_radius)
 	if hint_ball_at_start and not _balls.is_empty():
 		_start_ball_hint()
-	if day_night_enabled:
-		if day_phases.is_empty():
-			day_phases = _default_day_phases()
-		_apply_phase(day_phases[_day_index], false)   # set the starting time instantly
+	if day_night_enabled and _sun:
+		_day_night = DayNightCycle.new()
+		_day_night.name = "DayNightCycle"
+		add_child(_day_night)
+		var env: Environment = _world_env.environment if _world_env else null
+		_day_night.setup(_sun, env, day_transition_time, day_phases)
+	if npc_enabled:
+		_npc = NpcDirector.new()
+		_npc.name = "NpcDirector"
+		add_child(_npc)
+		_npc.setup(self, grid_size, cell_size, ground_y, npc_walk_speed)
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -706,6 +705,8 @@ func has_water(tile: Vector2i) -> bool:
 ## random per blade) over the grass tiles, driven by the wind shader. A MultiMesh
 ## holds a single mesh, so there's one MultiMesh per blade variant. Blade height
 ## is measured from each model, so it isn't set by hand.
+## Pick the grass tiles (from paint, all-ground, or the explicit list) and hand
+## them to a GrassField node, which owns the blades and the footprint interaction.
 func _spawn_grass() -> void:
 	var tiles: Array[Vector2i]
 	if grass_on_all_tiles:
@@ -716,101 +717,10 @@ func _spawn_grass() -> void:
 		tiles = grass_tiles
 	if tiles.is_empty():
 		return
-	var meshes := _blade_meshes()
-	if meshes.is_empty():
-		push_warning("World: no blade meshes (models/blade1.glb ...) found — no grass.")
-		return
-	var rng := RandomNumberGenerator.new()
-	# One transform list per blade variant.
-	var lists: Array = []
-	for _m in meshes:
-		lists.append([])
-	for tile in tiles:
-		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
-			continue
-		var top := get_elevation(tile.x, tile.y) + 0.5
-		# Stratified placement: one blade per cell of a sub-grid across the tile
-		# (with jitter), so coverage is even instead of randomly clumped.
-		var cols := maxi(int(ceil(sqrt(float(grass_per_tile)))), 1)
-		var sub := cell_size / float(cols)
-		var origin_x := tile.x * cell_size - cell_size * 0.5
-		var origin_z := tile.y * cell_size - cell_size * 0.5
-		for i in grass_per_tile:
-			var cx := origin_x + (float(i % cols) + 0.5) * sub
-			var cz := origin_z + (float(i / cols) + 0.5) * sub
-			# Independent XZ and Y scale: vary height more than width so the top of
-			# the field is ragged (breaks the uniform-sheet / grid look).
-			var sxz := grass_scale * rng.randf_range(0.85, 1.15)
-			var sy := grass_scale * maxf(0.3, 1.0 + rng.randf_range(-grass_height_variation, grass_height_variation))
-			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
-			t = t.scaled(Vector3(sxz, sy, sxz))
-			var wx := cx + rng.randf_range(-0.5, 0.5) * sub * grass_jitter
-			var wz := cz + rng.randf_range(-0.5, 0.5) * sub * grass_jitter
-			# Sit each blade on the actual (interpolated) surface so grass hugs
-			# slopes instead of stepping at tile centres.
-			t.origin = Vector3(wx, _grass_surface_y(wx, wz, top), wz)
-			(lists[rng.randi() % meshes.size()] as Array).append(t)
-	_grass_mats.clear()
-	_grass_mms.clear()
-	_grass_blade_mm = PackedInt32Array()
-	_grass_blade_idx = PackedInt32Array()
-	_grass_blade_pos = PackedVector3Array()
-	_grass_bins.clear()
-	_grass_active.clear()
-	for k in meshes.size():
-		var xforms: Array = lists[k]
-		if xforms.is_empty():
-			continue
-		var mesh: Mesh = meshes[k]
-		var blade_h: float = maxf(mesh.get_aabb().size.y, 0.01)
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.use_custom_data = true     # per-blade bend amount + push direction
-		mm.mesh = mesh
-		mm.instance_count = xforms.size()
-		var mm_index := _grass_mms.size()
-		for i in xforms.size():
-			var xf: Transform3D = xforms[i]
-			mm.set_instance_transform(i, xf)
-			mm.set_instance_custom_data(i, Color(0, 0, 0, 0))   # start un-bent
-			# Record this blade so we can stamp it when the cat walks near.
-			var gid := _grass_blade_mm.size()
-			_grass_blade_mm.append(mm_index)
-			_grass_blade_idx.append(i)
-			_grass_blade_pos.append(xf.origin)
-			var btile := Vector2i(roundi(xf.origin.x / cell_size), roundi(xf.origin.z / cell_size))
-			var bin: Array = _grass_bins.get(btile, [])
-			bin.append(gid)
-			_grass_bins[btile] = bin
-		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = mm
-		# Thin, swaying blades make the directional shadow map shimmer (worst at
-		# noon when they're edge-on to the sun). Off by default kills that jitter;
-		# grass still receives shadows from buildings.
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if grass_cast_shadows \
-			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		var mat := _grass_material(blade_h)
-		mmi.material_override = mat
-		_grass_mats.append(mat)
-		_grass_mms.append(mm)
-		_grid_root.add_child(mmi)
-
-## The mesh from each of models/blade1.glb .. blade5.glb that exists.
-func _blade_meshes() -> Array:
-	var out: Array = []
-	for i in range(1, 6):
-		var path := "res://models/blade%d.glb" % i
-		if not ResourceLoader.exists(path):
-			continue
-		var scene := load(path) as PackedScene
-		if scene == null:
-			continue
-		var inst := scene.instantiate()
-		for mi in _all_mesh_instances(inst):
-			out.append((mi as MeshInstance3D).mesh)
-			break
-		inst.queue_free()
-	return out
+	_grass = load(_GRASS_FIELD_SCRIPT).new()
+	_grass.name = "GrassField"
+	add_child(_grass)
+	_grass.setup(self, _player, _grid_root, tiles)
 
 ## Every generated ground tile (holes and water have no ground cube, so skip them).
 func _grass_all_ground_tiles() -> Array[Vector2i]:
@@ -825,8 +735,8 @@ func _grass_all_ground_tiles() -> Array[Vector2i]:
 
 ## Surface height at an arbitrary world XZ. On smooth terrain this bilinearly
 ## interpolates the corner heights (so grass hugs the slope); otherwise the tile's
-## flat top (`fallback`) is used.
-func _grass_surface_y(wx: float, wz: float, fallback: float) -> float:
+## flat top (`fallback`) is used. Called by GrassField when scattering blades.
+func grass_surface_y(wx: float, wz: float, fallback: float) -> float:
 	if not smooth_terrain:
 		return fallback
 	var tx := roundi(wx / cell_size)
@@ -837,29 +747,19 @@ func _grass_surface_y(wx: float, wz: float, fallback: float) -> float:
 	var b := lerpf(_corner_y(tx, tz + 1), _corner_y(tx + 1, tz + 1), u)
 	return lerpf(a, b, v)
 
-func _grass_material(blade_h: float) -> ShaderMaterial:
-	var m := ShaderMaterial.new()
-	m.shader = preload("res://shaders/grass_wind.gdshader")
-	m.set_shader_parameter("blade_height", blade_h)
-	m.set_shader_parameter("tip_color", grass_color)
-	m.set_shader_parameter("base_color", grass_color.darkened(0.18))
-	m.set_shader_parameter("normal_up", grass_normal_up)
-	m.set_shader_parameter("wind_strength", grass_wind_strength)
-	m.set_shader_parameter("wind_speed", grass_wind_speed)
-	m.set_shader_parameter("sway_scale", grass_sway_scale)
-	m.set_shader_parameter("hue_variation", grass_hue_variation)
-	m.set_shader_parameter("brightness_variation", grass_brightness_variation)
-	m.set_shader_parameter("patch_variation", grass_patch_variation)
-	# Sun-kissed tips: lighter + warmer (more red/green, less blue) than the tips.
-	var kiss := grass_color.lightened(0.3)
-	kiss.r = minf(1.0, kiss.r + 0.10)
-	kiss.g = minf(1.0, kiss.g + 0.06)
-	kiss.b = maxf(0.0, kiss.b - 0.04)
-	m.set_shader_parameter("tip_highlight", kiss)
-	m.set_shader_parameter("tip_kiss", grass_tip_kiss)
-	m.set_shader_parameter("shadow_lift", grass_shadow_lift)
-	m.set_shader_parameter("bend_strength", grass_bend_strength)
-	return m
+## Moving objects that also flatten grass (besides the cat): pushed crates and
+## rolling balls. Returns {pos, radius} per object; GrassField presses under each.
+func grass_pressers() -> Array:
+	var out: Array = []
+	var crate_r := cell_size * 0.9   # a crate flattens its whole tile (and a touch over)
+	for tile in _blocks:
+		var b: Node3D = _blocks[tile]
+		out.append({"pos": b.global_position, "radius": crate_r})
+	var ball_r := _ball_radius + 0.25
+	for ball in _balls:
+		var n: Node3D = ball["node"]
+		out.append({"pos": n.global_position, "radius": ball_r})
+	return out
 
 ## Which tiles are painted the grass colour on the map's texture. For each tile
 ## centre we find the map triangle under it, read its UV, sample the texture, and
@@ -1198,93 +1098,17 @@ func _ensure_obstacles() -> void:
 			if _player.is_tile_blocked(Vector2i(x, z)):
 				_obstacle[Vector2i(x, z)] = true
 
-# --- Background NPC -------------------------------------------------------
+# --- Background NPC (obstacle map is shared; the NpcDirector node does the rest) --
 
-## Spawn one roaming NPC. Deferred until physics is ready (obstacle probe + floor
-## rays need the space state), so this is polled from _process until it succeeds.
-func _try_spawn_npc() -> void:
-	if get_world_3d().direct_space_state == null:
-		return                                # physics not ready — retry next frame
+## Build (if needed) the static-obstacle map and report whether it's ready. The
+## NpcDirector waits on this before spawning.
+func ensure_obstacle_map() -> bool:
 	_ensure_obstacles()
-	if not _obstacle_built:
-		return
-	_build_npc_walkable()
-	if _npc_walk_list.is_empty():
-		_npc_spawned = true                   # nowhere to walk; don't retry
-		push_warning("World: no walkable tiles found for the NPC.")
-		return
-	var start: Vector2i = _npc_walk_list[randi() % _npc_walk_list.size()]
-	var npc := _NPC_SCENE.instantiate()
-	add_child(npc)
-	npc.setup_roam(self, start, cell_size, ground_y, npc_walk_speed)
-	_npc_spawned = true
+	return _obstacle_built
 
-## World position for the NPC to stand on a tile (matches the cat's ride height).
-func _npc_world(tile: Vector2i) -> Vector3:
-	return Vector3(tile.x * cell_size, ground_y, tile.y * cell_size)
-
-## A tile the NPC may stand on: not a static obstacle (building/wall) AND with
-## floor beneath it (so it never wanders onto an off-map edge).
-func _npc_walkable(tile: Vector2i) -> bool:
-	if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
-		return false
-	if _obstacle.has(tile):
-		return false
-	var space := get_world_3d().direct_space_state
-	if space == null:
-		return false
-	var w := Vector3(tile.x * cell_size, 0.0, tile.y * cell_size)
-	var params := PhysicsRayQueryParameters3D.create(
-		Vector3(w.x, ground_y + 5.0, w.z), Vector3(w.x, ground_y - 2.0, w.z))
-	return not space.intersect_ray(params).is_empty()
-
-## Build the set/list of tiles the NPC may stand on (once), so roaming and its
-## pathfinding are cheap lookups instead of per-tile raycasts.
-func _build_npc_walkable() -> void:
-	_npc_walk_set.clear()
-	_npc_walk_list.clear()
-	for x in grid_size:
-		for z in grid_size:
-			var t := Vector2i(x, z)
-			if _npc_walkable(t):
-				_npc_walk_set[t] = true
-				_npc_walk_list.append(t)
-
-## A random tile the NPC can stand on (for picking roam destinations).
-func npc_random_tile() -> Vector2i:
-	if _npc_walk_list.is_empty():
-		return Vector2i(-1, -1)
-	return _npc_walk_list[randi() % _npc_walk_list.size()]
-
-## BFS over NPC-walkable tiles (routes around buildings and off-map gaps).
-## Returns tiles from the first step to goal (cardinal-adjacent), or [] if
-## unreachable. Used by the roaming NPC.
-func npc_find_path(start: Vector2i, goal: Vector2i) -> Array:
-	if start == goal or not _npc_walk_set.has(goal):
-		return []
-	var came := {start: start}
-	var queue: Array[Vector2i] = [start]
-	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	var found := false
-	while not queue.is_empty():
-		var cur: Vector2i = queue.pop_front()
-		if cur == goal:
-			found = true
-			break
-		for d in dirs:
-			var n: Vector2i = cur + d
-			if came.has(n) or not _npc_walk_set.has(n):
-				continue
-			came[n] = cur
-			queue.append(n)
-	if not found:
-		return []
-	var path: Array = []
-	var c := goal
-	while c != start:
-		path.push_front(c)
-		c = came[c]
-	return path
+## Is this tile blocked by static geometry (building/wall/map feature)?
+func is_map_obstacle(tile: Vector2i) -> bool:
+	return _obstacle.has(tile)
 
 ## Called by the player: can it step onto `tile` moving in `dir`?
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
@@ -1450,80 +1274,19 @@ func _process(delta: float) -> void:
 	_update_goal()
 	_update_crate_heights(delta)
 	_update_balls(delta)
-	_update_keyhole(delta)
-	if npc_enabled and not _npc_spawned:
-		_try_spawn_npc()
 	# After lingering on a hinted object, pan the camera back to the cat (the
 	# outline stays until the object is actually interacted with).
 	if _hint_cam_timer > 0.0:
 		_hint_cam_timer -= delta
 		if _hint_cam_timer <= 0.0 and _camera and _camera.has_method("release_focus"):
 			_camera.release_focus()
-	if day_night_enabled and Input.is_action_just_pressed("cycle_time"):
-		_advance_day()
-	if not _grass_active.is_empty() or (not _grass_bins.is_empty() and _player):
-		_update_grass(delta)
-
-## Per-blade grass wake: fade any flattened blades on their own timer, then stamp
-## the grass on the tile the cat is standing on. Only tiles the cat actually steps
-## on flatten, and each recovers independently — so walking leaves a settling
-## trail of footprints, with no radius/sphere and no travelling wave.
-func _update_grass(delta: float) -> void:
-	var fade := delta / maxf(grass_recovery, 0.05)
-	# 1) Fade every still-recovering blade toward upright.
-	var dead: Array = []
-	for gid in _grass_active:
-		var e: Vector3 = _grass_active[gid]
-		e.x -= fade
-		if e.x <= 0.0:
-			dead.append(gid)
-			_write_blade(gid, 0.0, Vector2.ZERO)
-		else:
-			_grass_active[gid] = e
-			_write_blade(gid, e.x, Vector2(e.y, e.z))
-	for gid in dead:
-		_grass_active.erase(gid)
-	# 2) Press the grass on the tile under the cat toward flat — splayed away from
-	# it, easing in over grass_press_time so a landing doesn't snap down at once.
-	# Skip while airborne so a jump only flattens its takeoff and landing tiles,
-	# not every tile the arc flies over.
-	if _player == null:
-		return
-	if _player.has_method("is_airborne") and _player.is_airborne():
-		return
-	var p := _player.global_position
-	var ptile := Vector2i(roundi(p.x / cell_size), roundi(p.z / cell_size))
-	var press := delta / maxf(grass_press_time, 0.01)
-	var falloff := maxf(grass_footprint, 0.05)
-	var bin: Array = _grass_bins.get(ptile, [])
-	for gid in bin:
-		var bp: Vector3 = _grass_blade_pos[gid]
-		var off := Vector2(bp.x - p.x, bp.z - p.z)
-		var d := off.length()
-		# Full press right under the cat, easing to none at the footprint edge —
-		# so the deformation stays concentrated where the cat actually is.
-		var target := clampf(1.0 - d / falloff, 0.0, 1.0)
-		if target <= 0.0:
-			continue
-		var dir := off.normalized() if d > 0.0001 else Vector2(0, 1)
-		var cur: float = (_grass_active[gid] as Vector3).x if _grass_active.has(gid) else 0.0
-		var amt := minf(cur + press, target) if cur < target else cur
-		_grass_active[gid] = Vector3(amt, dir.x, dir.y)
-		_write_blade(gid, amt, dir)
-
-## Write one blade's bend amount + push direction into its MultiMesh custom data.
-func _write_blade(gid: int, bend: float, dir: Vector2) -> void:
-	var mm: MultiMesh = _grass_mms[_grass_blade_mm[gid]]
-	mm.set_instance_custom_data(_grass_blade_idx[gid],
-		Color(bend, dir.x * 0.5 + 0.5, dir.y * 0.5 + 0.5, 0.0))
 
 # --- Keyhole see-through --------------------------------------------------
 
-## Register each building mesh with its own keyhole material(s) + world bounds.
-## If buildings_path is set we target ONLY that node (map/floor stays solid).
-## Otherwise we fall back to the rest of the scene (minus terrain & cat).
-func _apply_keyhole() -> void:
-	_keyhole_buildings.clear()
+## The building root node(s) the keyhole effect should target. If buildings_path
+## is set we use ONLY that node (map/floor stays solid); otherwise we fall back to
+## the rest of the scene (minus terrain & the cat).
+func _keyhole_roots() -> Array:
 	var roots: Array = []
 	if buildings_path != NodePath(""):
 		var buildings := get_node_or_null(buildings_path)
@@ -1536,111 +1299,7 @@ func _apply_keyhole() -> void:
 			if child == _grid_root or child == _player:
 				continue   # skip terrain + dynamic objects and the cat
 			roots.append(child)
-	for r in roots:
-		for mi in _all_mesh_instances(r):
-			_keyhole_register(mi as MeshInstance3D)
-
-func _keyhole_register(mi: MeshInstance3D) -> void:
-	if mi.mesh == null:
-		return
-	var mats: Array = []
-	for i in mi.mesh.get_surface_count():
-		var mat := ShaderMaterial.new()
-		mat.shader = _KEYHOLE_SHADER
-		var orig := mi.get_active_material(i)
-		if orig is BaseMaterial3D:
-			mat.set_shader_parameter("albedo_color", (orig as BaseMaterial3D).albedo_color)
-			var tex := (orig as BaseMaterial3D).albedo_texture
-			if tex:
-				mat.set_shader_parameter("albedo_tex", tex)
-				mat.set_shader_parameter("use_tex", true)
-		mat.set_shader_parameter("radius", keyhole_radius)
-		mat.set_shader_parameter("softness", keyhole_softness)
-		mat.set_shader_parameter("min_alpha", keyhole_min_alpha)
-		mat.set_shader_parameter("depth_bias", keyhole_depth_bias)
-		mat.set_shader_parameter("clear_radius", keyhole_clear_radius)
-		mat.set_shader_parameter("active", 0.0)
-		mi.set_surface_override_material(i, mat)
-		mats.append(mat)
-	# World-space bounds, used to test whether the camera->cat line passes through
-	# this building (i.e. it's actually occluding the cat).
-	var world_aabb: AABB = mi.global_transform * mi.get_aabb()
-	_keyhole_buildings.append({"node": mi, "mats": mats, "aabb": world_aabb, "active": 0.0})
-
-## Swap the keyhole shader on (true) or restore each building's original glb
-## material (false, used while inside in free mode).
-func _set_keyhole_materials(enabled: bool) -> void:
-	for b in _keyhole_buildings:
-		var mi = b["node"]
-		if not is_instance_valid(mi):
-			continue
-		var mats: Array = b["mats"]
-		for i in mats.size():
-			mi.set_surface_override_material(i, mats[i] if enabled else null)
-
-## Feed the cat's screen position to every building, and switch each building's
-## effect on/off depending on whether it actually sits between camera and cat.
-func _update_keyhole(delta: float) -> void:
-	if _keyhole_buildings.is_empty() or _camera == null or _player == null:
-		return
-	# When the cat steps inside (free mode) we render the building with its
-	# ORIGINAL material so its lighting (spotlight), culling, etc. all behave;
-	# the keyhole shader only goes back on once we're outside in the iso view.
-	var inside: bool = _player.has_method("is_in_free_mode") and _player.is_in_free_mode()
-	if inside != _keyhole_inside:
-		_keyhole_inside = inside
-		_set_keyhole_materials(not inside)
-	if inside:
-		return
-	var vp := get_viewport().get_visible_rect().size
-	if vp.x <= 0.0 or vp.y <= 0.0:
-		return
-	var pw := _player.global_position
-	pw.y -= 0.1   # aim at the cat's body
-	var screen := _camera.unproject_position(pw)
-	var su := Vector2(screen.x / vp.x, screen.y / vp.y)
-	# Horizontal-only look direction so a tall wall behind the cat doesn't read as
-	# "in front" just because it's high.
-	var fwd := -_camera.global_transform.basis.z
-	fwd.y = 0.0
-	if fwd.length() > 0.0001:
-		fwd = fwd.normalized()
-	var asp := vp.x / vp.y
-	# Sample lines from the camera to points along the cat's VERTICAL axis only
-	# (feet / middle / head). Staying on the cat's exact x,z means these lines
-	# can't reach a wall behind the cat, so a building only activates when it's
-	# truly between the camera and the cat — not one the cat is standing before.
-	var cam_pos := _camera.global_position
-	var foot := _player.global_position
-	var targets: Array[Vector3] = [
-		foot + Vector3(0.0, 0.05, 0.0),
-		foot + Vector3(0.0, 0.45, 0.0),
-		foot + Vector3(0.0, 0.85, 0.0),
-	]
-	var ease_w := 1.0 - exp(-14.0 * delta)
-	for b in _keyhole_buildings:
-		var aabb: AABB = b["aabb"]
-		var occluding := false
-		# Skip occlusion if the cat is inside/under this building's bounding box —
-		# the AABB test would fire even through open arches or when walking inside.
-		if not aabb.has_point(foot):
-			for t in targets:
-				if aabb.intersects_segment(cam_pos, t):
-					occluding = true
-					break
-		var target := 1.0 if occluding else 0.0
-		b["active"] = lerpf(float(b["active"]), target, ease_w)
-		for m in b["mats"]:
-			m.set_shader_parameter("player_screen", su)
-			m.set_shader_parameter("player_world", pw)
-			m.set_shader_parameter("cam_forward", fwd)
-			m.set_shader_parameter("aspect", asp)
-			m.set_shader_parameter("active", b["active"])
-			m.set_shader_parameter("radius", keyhole_radius)
-			m.set_shader_parameter("softness", keyhole_softness)
-			m.set_shader_parameter("min_alpha", keyhole_min_alpha)
-			m.set_shader_parameter("depth_bias", keyhole_depth_bias)
-			m.set_shader_parameter("clear_radius", keyhole_clear_radius)
+	return roots
 
 ## Keep each crate sitting on whatever surface is under it (ground, or the goal
 ## pad at its current height), easing the Y so it rides the pad / smush smoothly.
@@ -1743,72 +1402,6 @@ func _clear_ball_hint() -> void:
 	_hint_cam_timer = 0.0
 	if _camera and _camera.has_method("release_focus"):
 		_camera.release_focus()
-
-# --- Day/night cycle -----------------------------------------------------
-
-## Advance to the next time of day and ease everything toward it.
-func _advance_day() -> void:
-	if day_phases.is_empty():
-		return
-	_day_index = (_day_index + 1) % day_phases.size()
-	_apply_phase(day_phases[_day_index], true)
-
-## Set (or tween) the sun and environment to a phase's look.
-func _apply_phase(phase: DayPhase, animate: bool) -> void:
-	var env: Environment = _world_env.environment if _world_env else null
-	if _day_tween and _day_tween.is_valid():
-		_day_tween.kill()
-	if not animate:
-		if _sun:
-			_sun.rotation_degrees = phase.sun_rotation
-			_sun.light_energy = phase.sun_energy
-			_sun.light_color = phase.sun_color
-		if env:
-			env.ambient_light_color = phase.ambient_color
-			env.ambient_light_energy = phase.ambient_energy
-			env.background_color = phase.sky_color
-		return
-	# Sunrise-style entry: snap the compass angle now (invisible while dark) so the
-	# sun rises in place on this side instead of sweeping the long way around.
-	if phase.snap_yaw_on_enter and _sun:
-		_sun.rotation_degrees.y = phase.sun_rotation.y
-	_day_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	var t := day_transition_time
-	if _sun:
-		_day_tween.tween_property(_sun, "rotation_degrees", phase.sun_rotation, t)
-		_day_tween.tween_property(_sun, "light_energy", phase.sun_energy, t)
-		_day_tween.tween_property(_sun, "light_color", phase.sun_color, t)
-	if env:
-		_day_tween.tween_property(env, "ambient_light_color", phase.ambient_color, t)
-		_day_tween.tween_property(env, "ambient_light_energy", phase.ambient_energy, t)
-		_day_tween.tween_property(env, "background_color", phase.sky_color, t)
-
-## Built-in phases used when day_phases is left empty. Afternoon matches the
-## scene's default sun; morning mirrors it (sun low from the opposite side).
-func _default_day_phases() -> Array[DayPhase]:
-	var phases: Array[DayPhase] = []
-	# Morning snaps its yaw on entry, so night -> morning rises on the East side
-	# instead of the sun swinging all the way around.
-	phases.append(_mk_phase("Morning", Vector3(-20, 120, 0), 0.55, Color(1.0, 0.85, 0.7), Color(0.60, 0.64, 0.72), 0.50, Color(0.74, 0.66, 0.60), true))
-	phases.append(_mk_phase("Midday", Vector3(-78, -30, 0), 0.65, Color(1.0, 0.98, 0.95), Color(0.75, 0.80, 0.86), 0.60, Color(0.45, 0.64, 0.90)))
-	phases.append(_mk_phase("Afternoon", Vector3(-50, -55, 0), 0.85, Color(1.0, 0.95, 0.85), Color(0.70, 0.78, 0.85), 0.55, Color(0.50, 0.66, 0.86)))
-	phases.append(_mk_phase("Evening", Vector3(-12, -80, 0), 0.68, Color(1.0, 0.6, 0.36), Color(0.58, 0.48, 0.52), 0.55, Color(0.94, 0.55, 0.4)))
-	# Night sits low on the West (where it set), so evening -> night just dims in
-	# place; the swing to the East happens during the (dark) morning snap.
-	phases.append(_mk_phase("Night", Vector3(-6, -100, 0), 0.10, Color(0.55, 0.65, 1.0), Color(0.22, 0.28, 0.45), 0.32, Color(0.06, 0.09, 0.20)))
-	return phases
-
-func _mk_phase(label: String, rot: Vector3, energy: float, col: Color, amb: Color, amb_e: float, sky: Color, snap_yaw := false) -> DayPhase:
-	var p := DayPhase.new()
-	p.label = label
-	p.sun_rotation = rot
-	p.sun_energy = energy
-	p.sun_color = col
-	p.ambient_color = amb
-	p.ambient_energy = amb_e
-	p.sky_color = sky
-	p.snap_yaw_on_enter = snap_yaw
-	return p
 
 # --- Rolling balls -------------------------------------------------------
 

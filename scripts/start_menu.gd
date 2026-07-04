@@ -8,13 +8,13 @@ func _ready() -> void:
 	$Center/Panel/Scene4.pressed.connect(_on_scene4)
 
 func _on_scene1() -> void:
-	get_tree().change_scene_to_file("res://scenes/scene1.tscn")
+	SceneManager.goto_level(1)
 
 func _on_scene2() -> void:
-	get_tree().change_scene_to_file("res://scenes/scene2.tscn")
+	SceneManager.goto_level(2)
 
 func _on_scene3() -> void:
-	get_tree().change_scene_to_file("res://scenes/scene3.tscn")
+	SceneManager.goto_level(3)
 
 func _on_scene4() -> void:
-	get_tree().change_scene_to_file("res://scenes/scene4.tscn")
+	SceneManager.goto_level(4)
