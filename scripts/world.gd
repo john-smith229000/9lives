@@ -124,9 +124,6 @@ const BIT_S := 8   # +Z
 ## Per-blade height variation (0 = every blade the same height, 0.4 = ±40%). A
 ## ragged top surface reads far more natural than a uniform sheet of grass.
 @export_range(0.0, 0.9) var grass_height_variation: float = 0.35
-## How far (m) each tile's grass spills past its edges so neighbouring tiles
-## overlap and the seams between them fill in. ~0.15 hides the gaps.
-@export var grass_seam_overlap: float = 0.05
 ## Grass colour (the tips; roots are a touch darker).
 @export var grass_color: Color = Color("6a9b47")
 ## How much blade normals lean toward straight up (0 = raw mesh, 1 = fully up).
@@ -732,14 +729,12 @@ func _spawn_grass() -> void:
 		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 			continue
 		var top := get_elevation(tile.x, tile.y) + 0.5
-		# Stratified placement over a region grown past the tile edges by
-		# grass_seam_overlap, so each tile's grass overlaps its neighbours and the
-		# seams between tiles fill in (no gaps, especially at high density).
+		# Stratified placement: one blade per cell of a sub-grid across the tile
+		# (with jitter), so coverage is even instead of randomly clumped.
 		var cols := maxi(int(ceil(sqrt(float(grass_per_tile)))), 1)
-		var span := cell_size + 2.0 * grass_seam_overlap
-		var sub := span / float(cols)
-		var origin_x := tile.x * cell_size - cell_size * 0.5 - grass_seam_overlap
-		var origin_z := tile.y * cell_size - cell_size * 0.5 - grass_seam_overlap
+		var sub := cell_size / float(cols)
+		var origin_x := tile.x * cell_size - cell_size * 0.5
+		var origin_z := tile.y * cell_size - cell_size * 0.5
 		for i in grass_per_tile:
 			var cx := origin_x + (float(i % cols) + 0.5) * sub
 			var cz := origin_z + (float(i / cols) + 0.5) * sub
