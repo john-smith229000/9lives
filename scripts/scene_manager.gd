@@ -18,6 +18,7 @@ var _current := ""
 ## starts frozen (e.g. when switching from the pause menu).
 func goto(path: String) -> void:
 	get_tree().paused = false
+	Dialogue.clear()                     # never let a text box survive a transition
 	_current = path
 	get_tree().change_scene_to_file(path)
 

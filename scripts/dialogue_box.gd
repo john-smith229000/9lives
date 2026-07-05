@@ -7,6 +7,11 @@ extends CanvasLayer
 ## Characters revealed per second by the typewriter.
 const REVEAL_CPS := 45.0
 
+## Retro palette: light "paper" fill, dark "ink" frame/text, a warm accent.
+const PAPER := Color(0.96, 0.93, 0.83, 0.98)
+const INK := Color(0.18, 0.14, 0.11, 1.0)
+const ACCENT := Color(0.62, 0.17, 0.12, 1.0)
+
 var _speech: PanelContainer
 var _speaker_lbl: Label
 var _body: RichTextLabel
@@ -16,6 +21,7 @@ var _hint_lbl: Label
 
 var _revealed := 0.0
 var _typing := false
+var _blink_t := 0.0
 
 func _ready() -> void:
 	layer = 50
@@ -23,15 +29,19 @@ func _ready() -> void:
 	hide_all()
 
 func _process(delta: float) -> void:
-	if not _typing:
-		return
-	_revealed += REVEAL_CPS * delta
-	var n := int(_revealed)
-	if n >= _body.get_total_character_count():
-		n = _body.get_total_character_count()
-		_typing = false
-	_body.visible_characters = n
-	_cont.visible = not _typing
+	if _typing:
+		_revealed += REVEAL_CPS * delta
+		var n := int(_revealed)
+		if n >= _body.get_total_character_count():
+			n = _body.get_total_character_count()
+			_typing = false
+		_body.visible_characters = n
+		if _typing:
+			_cont.visible = false
+	elif _speech.visible:
+		# Retro blinking "next" arrow once the line is fully shown.
+		_blink_t += delta
+		_cont.visible = fmod(_blink_t, 0.8) < 0.5
 
 # --- Speech ---------------------------------------------------------------
 
@@ -43,6 +53,7 @@ func show_speech(speaker: String, text: String) -> void:
 	_body.text = text
 	_body.visible_characters = 0
 	_revealed = 0.0
+	_blink_t = 0.0
 	_typing = true
 	_cont.visible = false
 
@@ -79,8 +90,8 @@ func hide_all() -> void:
 # --- Construction ---------------------------------------------------------
 
 func _build() -> void:
-	# Speech panel.
-	_speech = _make_panel(Color(0.08, 0.09, 0.12, 0.93), Color(1, 1, 1, 0.16))
+	# Speech panel — retro cream box with a chunky square border.
+	_speech = _make_panel(PAPER, INK)
 	add_child(_speech)
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 6)
@@ -88,7 +99,7 @@ func _build() -> void:
 
 	_speaker_lbl = Label.new()
 	_speaker_lbl.add_theme_font_size_override("font_size", 20)
-	_speaker_lbl.add_theme_color_override("font_color", Color(1.0, 0.82, 0.42))
+	_speaker_lbl.add_theme_color_override("font_color", ACCENT)
 	vb.add_child(_speaker_lbl)
 
 	_body = RichTextLabel.new()
@@ -98,36 +109,41 @@ func _build() -> void:
 	_body.custom_minimum_size = Vector2(0, 52)
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_theme_font_size_override("normal_font_size", 22)
-	_body.add_theme_color_override("default_color", Color(0.96, 0.96, 0.98))
+	_body.add_theme_color_override("default_color", INK)
 	vb.add_child(_body)
 
 	_cont = Label.new()
-	_cont.text = "[I] ▸"
+	_cont.text = "▼"
 	_cont.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_cont.add_theme_font_size_override("font_size", 14)
-	_cont.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+	_cont.add_theme_font_size_override("font_size", 16)
+	_cont.add_theme_color_override("font_color", ACCENT)
 	vb.add_child(_cont)
 
-	_anchor_bottom_center(_speech, 0.62, 150.0, 40.0)
+	# Sit low on the screen.
+	_anchor_bottom_center(_speech, 0.66, 140.0, 16.0)
 
 	# Hint banner (sits above where the speech panel would be).
-	_hint = _make_panel(Color(0.10, 0.12, 0.10, 0.86), Color(1.0, 0.9, 0.4, 0.55))
+	_hint = _make_panel(PAPER, INK)
 	add_child(_hint)
 	_hint_lbl = Label.new()
 	_hint_lbl.add_theme_font_size_override("font_size", 18)
-	_hint_lbl.add_theme_color_override("font_color", Color(1.0, 0.96, 0.82))
+	_hint_lbl.add_theme_color_override("font_color", INK)
 	_hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_wrap_margin(_hint, _hint_lbl, 18, 18, 10, 10)
-	_anchor_bottom_center(_hint, 0.5, 60.0, 210.0)
+	_anchor_bottom_center(_hint, 0.5, 60.0, 172.0)
 
+## Retro box: light PAPER fill with a thick, square INK frame. The stylebox's
+## content margins give the classic inset double-line feel against the border.
 func _make_panel(bg: Color, border: Color) -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg
-	sb.set_corner_radius_all(10)
-	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(0)
+	sb.set_border_width_all(4)
 	sb.border_color = border
+	sb.set_content_margin_all(6.0)
+	sb.anti_aliasing = false
 	p.add_theme_stylebox_override("panel", sb)
 	return p
 

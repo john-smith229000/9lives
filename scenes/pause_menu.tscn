@@ -3,6 +3,7 @@
 [ext_resource type="Script" path="res://scripts/pause_menu.gd" id="1_menu"]
 
 [node name="PauseMenu" type="CanvasLayer"]
+layer = 100
 process_mode = 3
 script = ExtResource("1_menu")
 

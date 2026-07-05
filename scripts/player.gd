@@ -143,6 +143,9 @@ var hole_provider: Callable
 ## Set by World: has_water(tile) -> bool. True if water is there (can't be walked
 ## onto or landed on; crates float in it).
 var water_provider: Callable
+## Set by World: has_npc(tile) -> bool. True if an NPC stands there (can't be
+## walked onto OR landed on).
+var npc_provider: Callable
 
 func _ready() -> void:
 	_model = $Model
@@ -782,7 +785,7 @@ func _is_drop(from: Vector2i, to: Vector2i) -> bool:
 ## A tile a jump may land on: on-board, no ball. A crate counts as landable
 ## (the cat mounts its top); only balls and solid walls are excluded.
 func _tile_landable(tile: Vector2i) -> bool:
-	if not _in_bounds(tile) or _tile_has_ball(tile) or _tile_has_hole(tile):
+	if not _in_bounds(tile) or _tile_has_ball(tile) or _tile_has_hole(tile) or _tile_has_npc(tile):
 		return false
 	if _tile_has_block(tile):
 		return true                      # crate: land on top (on land or floating)
@@ -797,6 +800,10 @@ func _tile_has_hole(tile: Vector2i) -> bool:
 ## Is there water on this tile? (Can't land here.)
 func _tile_has_water(tile: Vector2i) -> bool:
 	return water_provider.is_valid() and bool(water_provider.call(tile))
+
+## Is an NPC standing on this tile? (Can't land here.)
+func _tile_has_npc(tile: Vector2i) -> bool:
+	return npc_provider.is_valid() and bool(npc_provider.call(tile))
 
 ## Is there a mountable crate on this tile?
 func _tile_has_block(tile: Vector2i) -> bool:

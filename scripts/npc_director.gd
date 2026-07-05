@@ -15,6 +15,7 @@ var _speed := 1.6
 var _walk_set: Dictionary = {}          # Vector2i -> true, tiles the NPC may stand on
 var _walk_list: Array[Vector2i] = []    # same tiles, for random picks
 var _spawned := false
+var _npc_node: Node3D                    # the roaming NPC instance, once spawned
 
 func setup(world: Node, grid_size: int, cell_size: float, ground_y: float, speed: float) -> void:
 	_world = world
@@ -41,7 +42,16 @@ func _process(_delta: float) -> void:
 	var npc := _NPC_SCENE.instantiate()
 	add_child(npc)
 	npc.setup_roam(self, start, _cell, _ground_y, _speed)
+	_npc_node = npc
 	_spawned = true
+
+## The tile the roaming NPC currently occupies (nearest tile to its position), or
+## (-1, -1) before it spawns. Used by World to keep the player off its tile.
+func npc_tile() -> Vector2i:
+	if _npc_node == null:
+		return Vector2i(-1, -1)
+	var p := _npc_node.global_position
+	return Vector2i(roundi(p.x / _cell), roundi(p.z / _cell))
 
 ## A tile the NPC may stand on: not a static obstacle (building/wall) AND with
 ## floor beneath it (so it never wanders onto an off-map edge).

@@ -330,6 +330,7 @@ func _ready() -> void:
 		_player.block_provider = Callable(self, "has_block")
 		_player.hole_provider = Callable(self, "has_hole")
 		_player.water_provider = Callable(self, "has_water")
+		_player.npc_provider = Callable(self, "_tile_has_npc")
 		_player.view_camera = _camera
 		_player.sync_to_grid()
 		_player_start = _player.global_position
@@ -1238,6 +1239,8 @@ func _path_walkable(tile: Vector2i) -> bool:
 		return false
 	if confine_to_land and not _land.has(tile):
 		return false
+	if _tile_has_npc(tile):
+		return false
 	if _water.has(tile):
 		return _blocks.has(tile)     # only a floating crate is walkable
 	if _blocks.has(tile) or _holes.has(tile):
@@ -1278,12 +1281,26 @@ func ensure_obstacle_map() -> bool:
 func is_map_obstacle(tile: Vector2i) -> bool:
 	return _obstacle.has(tile)
 
+## Is an NPC standing on this tile? Covers the roaming background NPC and any
+## stationary talkable (an Interactable in the "interactable" group). Used to keep
+## the player from sharing a tile with them.
+func _tile_has_npc(tile: Vector2i) -> bool:
+	if _npc and _npc.npc_tile() == tile:
+		return true
+	for node in get_tree().get_nodes_in_group("interactable"):
+		if node is Interactable and node.interact_tile(cell_size) == tile:
+			return true
+	return false
+
 ## Called by the player: can it step onto `tile` moving in `dir`?
 ## Returns true (free), false (blocked), or {block, from, to} when a block is
 ## being pushed — the player then slides that block in lockstep with itself.
 func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 	# Off the land (open sea / off-map) is never walkable.
 	if confine_to_land and not _land.has(tile):
+		return false
+	# An NPC (roaming or a stationary talkable) occupies its tile — can't share it.
+	if _tile_has_npc(tile):
 		return false
 	# A hole can't be walked onto (only jumped over).
 	if _holes.has(tile):

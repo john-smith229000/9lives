@@ -45,6 +45,17 @@ func start_speech(speaker: String, lines: Array, on_close := Callable()) -> void
 	_started_frame = Engine.get_frames_drawn()
 	_box.show_speech(_speaker, str(_lines[0]))
 
+## Wipe all conversation/hint state and hide the box. Called on every scene
+## change (see SceneManager.goto) so nothing lingers across levels or into the
+## menu.
+func clear() -> void:
+	_active = false
+	_lines = []
+	_idx = 0
+	_on_close = Callable()
+	if _box:
+		_box.hide_all()
+
 ## Show a non-blocking hint banner.
 func show_hint(text: String) -> void:
 	if text != "":
