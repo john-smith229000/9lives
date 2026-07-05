@@ -29,7 +29,7 @@ func setup(world: Node, grid_size: int, cell_size: float, ground_y: float, speed
 func _process(_delta: float) -> void:
 	if _spawned or _world == null:
 		return
-	if get_viewport().world_3d.direct_space_state == null:
+	if get_viewport().find_world_3d().direct_space_state == null:
 		return                                # physics not ready — retry next frame
 	if not _world.ensure_obstacle_map():
 		return
@@ -60,7 +60,7 @@ func _walkable(tile: Vector2i) -> bool:
 		return false
 	if _world.is_map_obstacle(tile):
 		return false
-	var space := get_viewport().world_3d.direct_space_state
+	var space := get_viewport().find_world_3d().direct_space_state
 	if space == null:
 		return false
 	var w := Vector3(tile.x * _cell, 0.0, tile.y * _cell)
@@ -86,11 +86,16 @@ func npc_random_tile() -> Vector2i:
 		return Vector2i(-1, -1)
 	return _walk_list[randi() % _walk_list.size()]
 
+## Is this tile currently occupied by a crate or ball? (Dynamic, so the NPC routes
+## around them and stops if one is pushed into its path.)
+func is_blocked(tile: Vector2i) -> bool:
+	return _world != null and _world.has_method("has_pushable") and _world.has_pushable(tile)
+
 ## BFS over NPC-walkable tiles (routes around buildings and off-map gaps).
 ## Returns tiles from the first step to goal (cardinal-adjacent), or [] if
 ## unreachable.
 func npc_find_path(start: Vector2i, goal: Vector2i) -> Array:
-	if start == goal or not _walk_set.has(goal):
+	if start == goal or not _walk_set.has(goal) or is_blocked(goal):
 		return []
 	var came := {start: start}
 	var queue: Array[Vector2i] = [start]
@@ -103,7 +108,7 @@ func npc_find_path(start: Vector2i, goal: Vector2i) -> Array:
 			break
 		for d in dirs:
 			var n: Vector2i = cur + d
-			if came.has(n) or not _walk_set.has(n):
+			if came.has(n) or not _walk_set.has(n) or is_blocked(n):
 				continue
 			came[n] = cur
 			queue.append(n)

@@ -133,6 +133,9 @@ func _do_walking(delta: float) -> void:
 			return
 		_anim_t = _t_loop_start + (_anim_t - _t_loop_end)   # wrap the loop
 		_on_loop_complete()
+	# A crate or ball got pushed into the way? Drop this path and find a new route.
+	if not _path.is_empty() and _world != null and _world.has_method("is_blocked") and _world.is_blocked(_path[0]):
+		_path.clear()
 	if _path.is_empty():
 		_pick_destination()
 		_update_target()

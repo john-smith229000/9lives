@@ -1188,6 +1188,10 @@ func _on_click(event: InputEvent, catcher: Control) -> void:
 func _is_pushable_tile(tile: Vector2i) -> bool:
 	return _blocks.has(tile) or not _ball_at(tile).is_empty()
 
+## Public: is a crate or ball on this tile? (For the NPC to route around them.)
+func has_pushable(tile: Vector2i) -> bool:
+	return _is_pushable_tile(tile)
+
 ## Straight cardinal line of tiles from start (exclusive) toward target, used for
 ## push gestures so the path runs through the object instead of around it.
 func _straight_line(start: Vector2i, dir: Vector2i, target: Vector2i) -> Array:
@@ -1415,7 +1419,7 @@ func can_enter(tile: Vector2i, dir: Vector2i) -> Variant:
 	var beyond: Vector2i = line[line.size() - 1] + dir
 	if beyond.x < 0 or beyond.x >= grid_size or beyond.y < 0 or beyond.y >= grid_size:
 		return false
-	if _holes.has(beyond) or not _ball_at(beyond).is_empty():
+	if _holes.has(beyond) or not _ball_at(beyond).is_empty() or _tile_has_npc(beyond):
 		return false
 	if _blocks.has(beyond):
 		# Destination occupied: only a single crate pushed onto a LONE floating
@@ -1447,7 +1451,7 @@ func _shove_stack_top(tile: Vector2i, dir: Vector2i) -> Variant:
 	var dest := tile + dir
 	if dest.x < 0 or dest.x >= grid_size or dest.y < 0 or dest.y >= grid_size:
 		return false
-	if _holes.has(dest) or _blocks.has(dest) or not _ball_at(dest).is_empty():
+	if _holes.has(dest) or _blocks.has(dest) or not _ball_at(dest).is_empty() or _tile_has_npc(dest):
 		return false
 	var stack: Array = _water_stack[tile]
 	var top: Node3D = stack[stack.size() - 1]
@@ -1819,6 +1823,8 @@ func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:
 		return true                     # land crate blocks; a floating crate is rollable
 	if tile == _player_tile():
 		return true                     # don't roll through the cat
+	if _tile_has_npc(tile):
+		return true                     # don't roll through the NPC
 	for b in _balls:
 		if b != self_ball and b["resting"] and b["tile"] == tile:
 			return true

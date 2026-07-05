@@ -7,6 +7,12 @@ func _ready() -> void:
 	$Center/Panel/Scene3.pressed.connect(_on_scene3)
 	$Center/Panel/Scene4.pressed.connect(_on_scene4)
 	$Center/Panel/Scene5.pressed.connect(_on_scene5)
+	var retro: CheckButton = $Center/Panel/RetroToggle
+	retro.button_pressed = RetroMode.active
+	retro.toggled.connect(_on_retro_toggled)
+
+func _on_retro_toggled(on: bool) -> void:
+	RetroMode.active = on   # applies on the next scene you enter
 
 func _on_scene1() -> void:
 	SceneManager.goto_level(1)

@@ -62,6 +62,9 @@ func _blade_xform(rng: RandomNumberGenerator) -> Transform3D:
 func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
 	var cell := _world.cell_size
 	var rng := RandomNumberGenerator.new()
+	var per := _world.grass_per_tile
+	if RetroMode.active:
+		per = maxi(1, int(round(per * RetroMode.GRASS_DENSITY)))
 	var lists: Array = []
 	for _m in meshes:
 		lists.append([])
@@ -71,11 +74,11 @@ func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
 		if _exclude.has(tile):
 			continue
 		var top := _world.get_elevation(tile.x, tile.y) + 0.5
-		var cols := maxi(int(ceil(sqrt(float(_world.grass_per_tile)))), 1)
+		var cols := maxi(int(ceil(sqrt(float(per)))), 1)
 		var sub := cell / float(cols)
 		var origin_x := tile.x * cell - cell * 0.5
 		var origin_z := tile.y * cell - cell * 0.5
-		for i in _world.grass_per_tile:
+		for i in per:
 			var cx := origin_x + (float(i % cols) + 0.5) * sub
 			var cz := origin_z + (float(i / cols) + 0.5) * sub
 			var t := _blade_xform(rng)
@@ -92,12 +95,13 @@ func _scatter_mesh(meshes: Array, tris: PackedVector3Array, density: float) -> A
 	var lists: Array = []
 	for _m in meshes:
 		lists.append([])
+	var dens := density * (RetroMode.GRASS_DENSITY if RetroMode.active else 1.0)
 	var n_tri := tris.size() / 3
 	for ti in n_tri:
 		var a := tris[ti * 3]
 		var b := tris[ti * 3 + 1]
 		var c := tris[ti * 3 + 2]
-		var n := int(round(0.5 * (b - a).cross(c - a).length() * density))
+		var n := int(round(0.5 * (b - a).cross(c - a).length() * dens))
 		for _k in n:
 			var r1 := rng.randf()
 			var r2 := rng.randf()
@@ -221,9 +225,10 @@ func _material(blade_h: float) -> ShaderMaterial:
 	m.set_shader_parameter("tip_color", _world.grass_color)
 	m.set_shader_parameter("base_color", _world.grass_color.darkened(0.18))
 	m.set_shader_parameter("normal_up", _world.grass_normal_up)
-	m.set_shader_parameter("wind_strength", _world.grass_wind_strength)
+	var sway_mul := RetroMode.GRASS_SWAY if RetroMode.active else 1.0
+	m.set_shader_parameter("wind_strength", _world.grass_wind_strength * sway_mul)
 	m.set_shader_parameter("wind_speed", _world.grass_wind_speed)
-	m.set_shader_parameter("sway_scale", _world.grass_sway_scale)
+	m.set_shader_parameter("sway_scale", _world.grass_sway_scale * sway_mul)
 	m.set_shader_parameter("hue_variation", _world.grass_hue_variation)
 	m.set_shader_parameter("brightness_variation", _world.grass_brightness_variation)
 	m.set_shader_parameter("patch_variation", _world.grass_patch_variation)

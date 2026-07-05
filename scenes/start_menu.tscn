@@ -67,3 +67,8 @@ text = "Scene 4"
 custom_minimum_size = Vector2(220, 56)
 layout_mode = 2
 text = "Scene 5"
+
+[node name="RetroToggle" type="CheckButton" parent="Center/Panel"]
+custom_minimum_size = Vector2(220, 56)
+layout_mode = 2
+text = "Retro Mode"

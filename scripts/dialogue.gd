@@ -75,17 +75,16 @@ func hide_hint() -> void:
 func hint_visible() -> bool:
 	return _box.hint_visible()
 
-func _unhandled_input(event: InputEvent) -> void:
+func _process(_delta: float) -> void:
+	# Poll (rather than _unhandled_input) so advancing works even when the game is
+	# rendered inside a SubViewport (retro mode), where event routing differs.
 	if not _active:
 		return
-	if event.is_action_pressed("interact"):
-		# Swallow the very press that opened this conversation (belt-and-braces;
-		# the InteractionController usually consumes it first).
-		if Engine.get_frames_drawn() == _started_frame:
-			get_viewport().set_input_as_handled()
-			return
+	# Ignore the very press that opened this conversation.
+	if Engine.get_frames_drawn() == _started_frame:
+		return
+	if Input.is_action_just_pressed("interact"):
 		_advance()
-		get_viewport().set_input_as_handled()
 
 func _advance() -> void:
 	# First press finishes the typewriter; the next moves on.
