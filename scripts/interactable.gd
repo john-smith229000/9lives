@@ -9,6 +9,8 @@ class_name Interactable
 
 ## Emitted the first time a conversation with this interactable finishes.
 signal talked
+## Emitted every time a conversation with this interactable finishes.
+signal conversation_ended
 
 ## Name shown above the text (blank = no name line).
 @export var speaker: String = ""
@@ -18,6 +20,7 @@ signal talked
 @export_multiline var lines_after: PackedStringArray
 
 var _talked_once := false
+var _use_after := false
 ## Turn the owner NPC's "Model" child to face the cat when talked to.
 @export var face_player: bool = true
 ## Snap the owner to the tile's ground surface at start (handy on smooth terrain,
@@ -32,14 +35,20 @@ func interact_tile(cell: float) -> Vector2i:
 	var p := global_position
 	return Vector2i(roundi(p.x / cell), roundi(p.z / cell))
 
-## The lines as a plain Array (what Dialogue.start_speech expects). After the first
-## conversation, switches to `lines_after` if any were provided.
+## The lines as a plain Array (what Dialogue.start_speech expects). Uses
+## `lines_after` once use_after_lines() has been called (a scripted follow-up),
+## otherwise the default `lines`.
 func get_lines() -> Array:
-	var src := lines_after if (_talked_once and not lines_after.is_empty()) else lines
+	var src := lines_after if (_use_after and not lines_after.is_empty()) else lines
 	var a: Array = []
 	for l in src:
 		a.append(l)
 	return a
+
+## Switch future conversations to `lines_after` (called by a guide once the story
+## beat that unlocks them happens).
+func use_after_lines() -> void:
+	_use_after = true
 
 ## Called by the InteractionController when a conversation with this node closes.
 ## Emits `talked` on the first close (for scripted follow-ups).
@@ -48,6 +57,7 @@ func on_conversation_closed() -> void:
 	_talked_once = true
 	if first:
 		talked.emit()
+	conversation_ended.emit()
 
 ## Rotate the owner NPC's model to look at `world_pos` (the cat). NPC models here
 ## face +Z, so we add PI to match npc.gd's model_yaw_offset.

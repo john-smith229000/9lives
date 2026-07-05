@@ -20,6 +20,7 @@ var _idx := 0
 var _active := false
 var _started_frame := -1
 var _on_close: Callable
+var _hint_text := ""                  # the standing hint, if any (restored after speech)
 
 func _ready() -> void:
 	# The box builds its own UI (see dialogue_box.gd).
@@ -43,6 +44,8 @@ func start_speech(speaker: String, lines: Array, on_close := Callable()) -> void
 	_active = true
 	_on_close = on_close
 	_started_frame = Engine.get_frames_drawn()
+	if _hint_text != "":
+		_box.hide_hint()          # don't stack a hint under the speech box
 	_box.show_speech(_speaker, str(_lines[0]))
 
 ## Wipe all conversation/hint state and hide the box. Called on every scene
@@ -53,15 +56,20 @@ func clear() -> void:
 	_lines = []
 	_idx = 0
 	_on_close = Callable()
+	_hint_text = ""
 	if _box:
 		_box.hide_all()
 
-## Show a non-blocking hint banner.
+## Show a non-blocking hint banner. Held back while a speech box is up, then shown.
 func show_hint(text: String) -> void:
-	if text != "":
+	if text == "":
+		return
+	_hint_text = text
+	if not _active:
 		_box.show_hint(text)
 
 func hide_hint() -> void:
+	_hint_text = ""
 	_box.hide_hint()
 
 func hint_visible() -> bool:
@@ -97,4 +105,7 @@ func _close() -> void:
 	_on_close = Callable()
 	if cb.is_valid():
 		cb.call()
+	# Bring back a standing hint that was held during the conversation.
+	if _hint_text != "":
+		_box.show_hint(_hint_text)
 	finished.emit()

@@ -196,6 +196,8 @@ const BIT_S := 8   # +Z
 ## Optional tip shown in the hint banner while the ball is spotlighted (blank =
 ## none). Cleared when the ball is first shoved.
 @export var hint_ball_text: String = ""
+## Seconds the camera holds on the cat FIRST, before panning over to the ball.
+@export var hint_pre_hold: float = 1.0
 ## Seconds the camera lingers on the hinted ball before panning back to the cat.
 @export var hint_camera_hold: float = 1.6
 ## Outline colour and hull size (relative; 1.06 = 6% larger = thicker outline).
@@ -279,7 +281,18 @@ var _ball_radius := 0.375
 
 # --- Hint (spotlight an object until interacted with) ---
 var _hint_ball_node: Node3D = null
-var _hint_cam_timer := 0.0
+# Intro camera: 0 = idle, 1 = holding on the cat, 2 = holding on the ball.
+var _intro_phase := 0
+var _intro_timer := 0.0
+# Crate hint (triggered after the first NPC talk): outline a crate, fire
+# hint_crate_pushed once it's shoved.
+signal hint_crate_pushed
+var _hint_crate_node: Node3D = null
+var _hint_crate_start := Vector2i.ZERO
+var _hint_crate_active := false
+# Fires once, the first time any ball is shoved.
+signal ball_pushed
+var _ball_pushed_emitted := false
 
 # --- Grass ---
 # Typed as Node (not GrassField) and loaded at runtime, so World doesn't reference
@@ -1534,12 +1547,8 @@ func _process(delta: float) -> void:
 	_update_goal()
 	_update_crate_heights(delta)
 	_update_balls(delta)
-	# After lingering on a hinted object, pan the camera back to the cat (the
-	# outline stays until the object is actually interacted with).
-	if _hint_cam_timer > 0.0:
-		_hint_cam_timer -= delta
-		if _hint_cam_timer <= 0.0 and _camera and _camera.has_method("release_focus"):
-			_camera.release_focus()
+	_update_intro_camera(delta)
+	_update_crate_hint()
 
 # --- Keyhole see-through --------------------------------------------------
 
@@ -1650,20 +1659,68 @@ func _update_goal() -> void:
 func _start_ball_hint() -> void:
 	_hint_ball_node = _balls[0]["node"]
 	Outline.add(_hint_ball_node, hint_outline_color, hint_outline_scale, hint_outline_pulse_min, hint_outline_pulse_period)
-	if _camera and _camera.has_method("focus_on"):
-		_camera.focus_on(_hint_ball_node)
-		_hint_cam_timer = hint_camera_hold
-	Dialogue.show_hint(hint_ball_text)
+	# Start held on the cat; _update_intro_camera pans to the ball after hint_pre_hold,
+	# and only then shows the hint (so it doesn't appear before the camera gets there).
+	_intro_phase = 1
+	_intro_timer = hint_pre_hold
+
+## Drive the intro camera: hold on the cat, pan to the ball, then back.
+func _update_intro_camera(delta: float) -> void:
+	if _intro_phase == 0:
+		return
+	_intro_timer -= delta
+	if _intro_timer > 0.0:
+		return
+	if _intro_phase == 1:
+		_intro_phase = 2
+		_intro_timer = hint_camera_hold
+		if _hint_ball_node and _camera and _camera.has_method("focus_on"):
+			_camera.focus_on(_hint_ball_node)
+		Dialogue.show_hint(hint_ball_text)
+	else:
+		_intro_phase = 0
+		if _camera and _camera.has_method("release_focus"):
+			_camera.release_focus()
 
 func _clear_ball_hint() -> void:
 	if _hint_ball_node == null:
 		return
 	Outline.remove(_hint_ball_node)
 	_hint_ball_node = null
-	_hint_cam_timer = 0.0
+	_intro_phase = 0
 	if _camera and _camera.has_method("release_focus"):
 		_camera.release_focus()
 	Dialogue.hide_hint()
+
+## Outline one crate the same way the ball is spotlighted. When that crate is
+## later shoved, `hint_crate_pushed` fires once (see _update_crate_hint). Called by
+## the villager guide after the first conversation.
+func highlight_hint_crate() -> void:
+	if _hint_crate_active:
+		return
+	var tile: Vector2i
+	if not block_tiles.is_empty() and _blocks.has(block_tiles[0]):
+		tile = block_tiles[0]
+	elif not _blocks.is_empty():
+		tile = _blocks.keys()[0]
+	else:
+		return
+	_hint_crate_node = _blocks[tile]
+	_hint_crate_start = tile
+	_hint_crate_active = true
+	Outline.add(_hint_crate_node, hint_outline_color, hint_outline_scale, hint_outline_pulse_min, hint_outline_pulse_period)
+
+## Watch the hinted crate; once it leaves its start tile, clear the outline and
+## emit hint_crate_pushed (once).
+func _update_crate_hint() -> void:
+	if not _hint_crate_active or _hint_crate_node == null:
+		return
+	var t := Vector2i(roundi(_hint_crate_node.position.x / cell_size), roundi(_hint_crate_node.position.z / cell_size))
+	if t != _hint_crate_start:
+		_hint_crate_active = false
+		Outline.remove(_hint_crate_node)
+		_hint_crate_node = null
+		hint_crate_pushed.emit()
 
 # --- Rolling balls -------------------------------------------------------
 
@@ -1750,6 +1807,9 @@ func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
 	# First shove of the hinted ball clears its spotlight.
 	if ball["node"] == _hint_ball_node:
 		_clear_ball_hint()
+	if not _ball_pushed_emitted:
+		_ball_pushed_emitted = true
+		ball_pushed.emit()
 	return true
 
 func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:

@@ -4,8 +4,12 @@ extends CanvasLayer
 ## are no scene-anchor gotchas. Driven by the Dialogue autoload; it never reads
 ## input itself.
 
-## Characters revealed per second by the typewriter.
-const REVEAL_CPS := 45.0
+## Characters revealed per second by the speech typewriter.
+const REVEAL_CPS := 26.0
+## Characters per second for the hint banner (calmer than speech).
+const HINT_REVEAL_CPS := 15.0
+## Seconds for the hint banner to fade in (so it doesn't pop in instantly).
+const HINT_FADE_TIME := 1.0
 
 ## Retro palette: light "paper" fill, dark "ink" frame/text, a warm accent.
 const PAPER := Color(0.96, 0.93, 0.83, 0.98)
@@ -22,6 +26,9 @@ var _hint_lbl: Label
 var _revealed := 0.0
 var _typing := false
 var _blink_t := 0.0
+var _hint_revealed := 0.0
+var _hint_typing := false
+var _hint_fade := 0.0
 
 func _ready() -> void:
 	layer = 50
@@ -43,6 +50,19 @@ func _process(delta: float) -> void:
 		# (not visibility) so the layout never reflows — that was the bobbing.
 		_blink_t += delta
 		_cont.modulate.a = 1.0 if fmod(_blink_t, 0.8) < 0.5 else 0.0
+	# Hint banner: fade the panel in, and type its text out.
+	if _hint.visible:
+		if _hint.modulate.a < 1.0:
+			_hint_fade += delta
+			_hint.modulate.a = minf(1.0, _hint_fade / HINT_FADE_TIME)
+		if _hint_typing:
+			_hint_revealed += HINT_REVEAL_CPS * delta
+			var total := _hint_lbl.text.length()
+			var n := int(_hint_revealed)
+			if n >= total:
+				n = total
+				_hint_typing = false
+			_hint_lbl.visible_characters = n
 
 # --- Speech ---------------------------------------------------------------
 
@@ -76,10 +96,16 @@ func hide_speech() -> void:
 
 func show_hint(text: String) -> void:
 	_hint.visible = true
+	_hint.modulate.a = 0.0
+	_hint_fade = 0.0
 	_hint_lbl.text = text
+	_hint_lbl.visible_characters = 0
+	_hint_revealed = 0.0
+	_hint_typing = true
 
 func hide_hint() -> void:
 	_hint.visible = false
+	_hint_typing = false
 
 func hint_visible() -> bool:
 	return _hint.visible
@@ -134,8 +160,9 @@ func _build() -> void:
 	_hint_lbl.add_theme_color_override("font_color", INK)
 	_hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_wrap_margin(_hint, _hint_lbl, 18, 18, 10, 10)
-	_anchor_bottom_center(_hint, 0.5, 60.0, 172.0)
+	_wrap_margin(_hint, _hint_lbl, 22, 22, 12, 12)
+	# Low on the screen, matching the dialogue box (they never show together).
+	_anchor_bottom_center(_hint, 0.66, 64.0, 16.0)
 
 ## Retro box: light PAPER fill with a thick, square INK frame. The stylebox's
 ## content margins give the classic inset double-line feel against the border.

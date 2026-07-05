@@ -18,8 +18,11 @@ extends Camera3D
 @export var zoom_max: float = 16.0
 ## Units of orthographic size changed per mouse-wheel notch.
 @export var zoom_step: float = 1.0
-## Follow smoothing. 0 = instant snap, higher = smoother lag.
+## Follow smoothing. 0 = instant snap, higher = snappier catch-up.
 @export var follow_smooth: float = 8.0
+## Smoothing used while panning to/from a spotlight target (focus_on / release).
+## Lower than follow_smooth = a slower, more deliberate pan.
+@export var focus_smooth: float = 1.5
 ## Seconds for one 90° swing when rotating (Q/E). Higher = slower, smoother turn.
 @export var rotate_time: float = 0.9
 ## Tight near/far planes. The default range (0.05..4000) wrecks depth-buffer
@@ -32,6 +35,8 @@ var _target: Node3D
 ## When set, the camera pans to focus this node instead of the player. Cleared to
 ## return to the player. Used to spotlight an object (e.g. a hint).
 var _focus_target: Node3D = null
+# While > 0, overrides follow_smooth for a slow pan; reset once the pan arrives.
+var _pan_smooth: float = 0.0
 var _offset: Vector3
 # Smoothed point the camera orbits/looks at. Equals the player when standing
 # still, lags a touch while it moves. We orbit THIS so the cat stays centered.
@@ -69,13 +74,16 @@ func _ready() -> void:
 func get_quadrant() -> int:
 	return ((_quadrant % 4) + 4) % 4
 
-## Pan to spotlight `node` (instead of the player) until release_focus().
+## Pan to spotlight `node` (instead of the player) until release_focus(). The pan
+## uses the slower focus_smooth until it arrives.
 func focus_on(node: Node3D) -> void:
 	_focus_target = node
+	_pan_smooth = focus_smooth
 
-## Return the camera focus to the player.
+## Return the camera focus to the player, panning back at the slower focus rate.
 func release_focus() -> void:
 	_focus_target = null
+	_pan_smooth = focus_smooth
 
 ## Snap the view back to the default orientation (used on restart).
 func reset_rotation() -> void:
@@ -135,8 +143,13 @@ func _process(delta: float) -> void:
 	# Smooth the focus point toward the target, then place the camera at a rigid
 	# offset from it. Rotation orbits this focus, so the cat never swings off
 	# center while the view spins.
-	if follow_smooth <= 0.0:
+	# Use the slow pan rate while panning to/from a focus; snap back to the normal
+	# follow rate once the pan has essentially arrived.
+	var smooth := _pan_smooth if _pan_smooth > 0.0 else follow_smooth
+	if smooth <= 0.0:
 		_focus = look.global_position
 	else:
-		_focus = _focus.lerp(look.global_position, 1.0 - exp(-follow_smooth * delta))
+		_focus = _focus.lerp(look.global_position, 1.0 - exp(-smooth * delta))
+	if _pan_smooth > 0.0 and _focus.distance_to(look.global_position) < 0.05:
+		_pan_smooth = 0.0
 	global_position = _focus + _offset

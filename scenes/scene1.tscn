@@ -20,6 +20,8 @@ grass_on_all_tiles = true
 block_tiles = Array[Vector2i]([Vector2i(12, 10), Vector2i(12, 11)])
 hint_ball_at_start = true
 hint_ball_text = "Nudge a ball to roll it — just walk into it."
+hint_pre_hold = 3.5
+hint_camera_hold = 5.0
 hole_tiles = Array[Vector2i]([Vector2i(10, 8)])
 water_tiles = Array[Vector2i]([Vector2i(13, 9), Vector2i(14, 9), Vector2i(15, 9), Vector2i(13, 10), Vector2i(14, 10), Vector2i(15, 10), Vector2i(13, 11), Vector2i(14, 11), Vector2i(15, 11)])
 
