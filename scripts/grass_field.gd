@@ -41,6 +41,14 @@ func setup_mesh(world: World, player: Node3D, grid_root: Node3D, tris: PackedVec
 		return
 	_build(meshes, _scatter_mesh(meshes, tris, density))
 
+## Per-blade rotation + size: random yaw (scaled by grass_yaw_jitter) and a uniform
+## random size that only ever shrinks the blade (never larger than grass_scale).
+func _blade_xform(rng: RandomNumberGenerator) -> Transform3D:
+	var yaw := rng.randf() * TAU * _world.grass_yaw_jitter
+	var lo := maxf(1.0 - _world.grass_size_random, 0.05)
+	var s := _world.grass_scale * rng.randf_range(lo, 1.0)
+	return Transform3D.IDENTITY.rotated(Vector3.UP, yaw).scaled(Vector3(s, s, s))
+
 ## Fill one transform list per blade variant by scattering over the grass tiles
 ## (with jitter), each blade on the tile's interpolated surface height.
 func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
@@ -60,10 +68,7 @@ func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
 		for i in _world.grass_per_tile:
 			var cx := origin_x + (float(i % cols) + 0.5) * sub
 			var cz := origin_z + (float(i / cols) + 0.5) * sub
-			var sxz := _world.grass_scale * rng.randf_range(0.85, 1.15)
-			var sy := _world.grass_scale * maxf(0.3, 1.0 + rng.randf_range(-_world.grass_height_variation, _world.grass_height_variation))
-			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
-			t = t.scaled(Vector3(sxz, sy, sxz))
+			var t := _blade_xform(rng)
 			var wx := cx + rng.randf_range(-0.5, 0.5) * sub * _world.grass_jitter
 			var wz := cz + rng.randf_range(-0.5, 0.5) * sub * _world.grass_jitter
 			t.origin = Vector3(wx, _world.grass_surface_y(wx, wz, top), wz)
@@ -89,10 +94,7 @@ func _scatter_mesh(meshes: Array, tris: PackedVector3Array, density: float) -> A
 			if r1 + r2 > 1.0:
 				r1 = 1.0 - r1
 				r2 = 1.0 - r2
-			var sxz := _world.grass_scale * rng.randf_range(0.85, 1.15)
-			var sy := _world.grass_scale * maxf(0.3, 1.0 + rng.randf_range(-_world.grass_height_variation, _world.grass_height_variation))
-			var t := Transform3D.IDENTITY.rotated(Vector3.UP, rng.randf() * TAU)
-			t = t.scaled(Vector3(sxz, sy, sxz))
+			var t := _blade_xform(rng)
 			t.origin = a + (b - a) * r1 + (c - a) * r2
 			(lists[rng.randi() % meshes.size()] as Array).append(t)
 	return lists
@@ -231,9 +233,24 @@ func _process(delta: float) -> void:
 ## independently — a settling trail of footprints, no radius/sphere, no wave. Skips
 ## while airborne so a jump only flattens its takeoff and landing tiles.
 func _update(delta: float) -> void:
+	var press := delta / maxf(_world.grass_press_time, 0.01)
+	# Press FIRST and record every blade a presser is on this frame. Those blades
+	# hold their bend; only blades nobody is standing on recover afterwards — so the
+	# grass under the cat (or a crate) never springs back up while it sits there.
+	var held: Dictionary = {}
+	if _player and not (_player.has_method("is_airborne") and _player.is_airborne()):
+		# Cat: soft (linear) footprint, over every tile it reaches.
+		_press_area(_player.global_position, maxf(_world.grass_footprint, 0.05), press, 0.0, held)
+	# Pushed crates and rolling balls flatten grass under them too — a solid, fully
+	# flat patch (plateau falloff) over a wider area, so they bend more than the cat.
+	for a in _world.grass_pressers():
+		_press_area(a["pos"], a["radius"], press, 0.6, held)
+	# Recover every OTHER flattened blade on its own timer.
 	var fade := delta / maxf(_world.grass_recovery, 0.05)
 	var dead: Array = []
 	for gid in _active:
+		if held.has(gid):
+			continue                        # a presser is on it — hold, don't recover
 		var e: Vector3 = _active[gid]
 		e.x -= fade
 		if e.x <= 0.0:
@@ -244,24 +261,11 @@ func _update(delta: float) -> void:
 			_write(gid, e.x, Vector2(e.y, e.z))
 	for gid in dead:
 		_active.erase(gid)
-	var press := delta / maxf(_world.grass_press_time, 0.01)
-	# The cat presses the grass on the tile it stands on (only while grounded, so a
-	# jump only flattens its takeoff/landing tiles). Single tile — unchanged.
-	if _player and not (_player.has_method("is_airborne") and _player.is_airborne()):
-		var cell: float = _world.cell_size
-		var p := _player.global_position
-		# Cat: single tile, soft (linear) footprint — unchanged from before.
-		_press_tile(Vector2i(roundi(p.x / cell), roundi(p.z / cell)), p, maxf(_world.grass_footprint, 0.05), press, 0.0)
-	# Pushed crates and rolling balls flatten grass under them too — a solid, fully
-	# flat patch (plateau falloff) over a wider area, across every tile they overlap,
-	# so they bend the grass more than the cat and leave a clear trail.
-	for a in _world.grass_pressers():
-		_press_area(a["pos"], a["radius"], press)
 
 ## Press the blades on a single tile toward flat, splayed away from `pos`. `inner`
 ## is the fraction of `radius` that stays fully flat (1.0) before the edge tapers:
 ## 0.0 = a soft linear footprint (the cat), higher = a solid flattened patch.
-func _press_tile(tile: Vector2i, pos: Vector3, radius: float, step: float, inner: float) -> void:
+func _press_tile(tile: Vector2i, pos: Vector3, radius: float, step: float, inner: float, held: Dictionary) -> void:
 	var r := maxf(radius, 0.05)
 	var edge := maxf(r * (1.0 - inner), 0.0001)   # width of the tapering rim
 	var bin: Array = _bins.get(tile, [])
@@ -272,21 +276,34 @@ func _press_tile(tile: Vector2i, pos: Vector3, radius: float, step: float, inner
 		var target := clampf((r - d) / edge, 0.0, 1.0)
 		if target <= 0.0:
 			continue
+		# A presser is on this blade — mark it held so it won't recover this frame,
+		# even if it's already flatter than our target (e.g. pressed harder while we
+		# walked in). That's what keeps grass down under a standing cat.
+		held[gid] = true
+		var e: Vector3 = _active[gid] if _active.has(gid) else Vector3.ZERO
+		var cur := e.x
+		# Already flatter than we'd bend it? Hold it as-is: keep its lean, don't snap
+		# it around and don't spring it up toward our shallower target.
+		if cur >= target:
+			continue
 		var dir := off.normalized() if d > 0.0001 else Vector2(0, 1)
-		var cur: float = (_active[gid] as Vector3).x if _active.has(gid) else 0.0
-		var amt := minf(cur + step, target) if cur < target else cur
-		_active[gid] = Vector3(amt, dir.x, dir.y)
-		_write(gid, amt, dir)
+		var amt := minf(cur + step, target)
+		# Ease the lean toward the new direction instead of snapping it.
+		var cur_dir := Vector2(e.y, e.z)
+		var new_dir := dir if cur_dir.length() < 0.001 else cur_dir.lerp(dir, 0.25).normalized()
+		_active[gid] = Vector3(amt, new_dir.x, new_dir.y)
+		_write(gid, amt, new_dir)
 
-## Press all tiles a `radius` reaches (so crates/balls flatten across tile edges
-## and leave a trail). Uses a plateau falloff (solid flat patch).
-func _press_area(pos: Vector3, radius: float, step: float) -> void:
+## Press all tiles a `radius` reaches, so a footprint bigger than one tile holds
+## every blade under it (not just the centre tile) — otherwise the ring that spills
+## into neighbouring tiles springs back up while the presser sits still.
+func _press_area(pos: Vector3, radius: float, step: float, inner: float, held: Dictionary) -> void:
 	var cell: float = _world.cell_size
 	var reach := maxi(int(ceil(radius / cell)), 0)
 	var ctile := Vector2i(roundi(pos.x / cell), roundi(pos.z / cell))
 	for tx in range(ctile.x - reach, ctile.x + reach + 1):
 		for tz in range(ctile.y - reach, ctile.y + reach + 1):
-			_press_tile(Vector2i(tx, tz), pos, radius, step, 0.6)
+			_press_tile(Vector2i(tx, tz), pos, radius, step, inner, held)
 
 ## Write one blade's bend amount + push direction into its MultiMesh custom data.
 func _write(gid: int, bend: float, dir: Vector2) -> void:

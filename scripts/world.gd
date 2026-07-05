@@ -23,6 +23,9 @@ const BIT_S := 8   # +Z
 @export var grid_size: int = 20
 @export var cell_size: float = 1.0
 @export var ground_y: float = 1.0
+## Starting sun angle (Euler degrees). Day/night scenes override it per phase; for
+## static scenes it sets how high/low and from which side the sun sits.
+@export var sun_angle: Vector3 = Vector3(-50.0, -55.0, 0.0)
 ## When false, skip generating the tile terrain (use a custom map mesh instead).
 @export var generate_terrain: bool = true
 ## Replace the beveled terrain tiles with plain flat-coloured boxes (same size and
@@ -55,7 +58,7 @@ const BIT_S := 8   # +Z
 ## the cat can't reach the beach; raise it if the cat walks out onto the sea floor.
 @export var sea_level: float = 0.0
 ## Scatter grass directly on the map's green (grass) surface geometry — density is
-## grass_per_tile blades per m². Follows the mesh with no per-tile gaps; use this
+## grass_per_area blades per m². Follows the mesh with no per-tile gaps; use this
 ## for a coloured-material map (scene 5) instead of grass_from_paint's tile grid.
 @export var grass_on_map_surface: bool = false
 ## Optional node holding the buildings (separate meshes). When set, the keyhole
@@ -128,8 +131,12 @@ const BIT_S := 8   # +Z
 @export var grass_uv_flip_v: bool = false
 ## Tiles (grid x, z) that get grass — used only when grass_from_paint is off.
 @export var grass_tiles: Array[Vector2i] = []
-## Tufts scattered per grass tile.
-@export var grass_per_tile: int = 150
+## Tile mode density: blades scattered per grass tile (scene 4's painted grass).
+@export var grass_per_tile: int = 180
+## Area (mesh) mode density: blades per square metre of surface (scenes 1 & 5,
+## where grass is scattered over the terrain/map mesh). Separate knob since it's a
+## different metric than grass_per_tile — tune each to match visually.
+@export var grass_per_area: float = 220.0
 ## Grass is split into square chunks this many tiles across, each its own
 ## MultiMesh, so off-screen chunks are frustum-culled (big win on large maps).
 @export var grass_chunk_size: int = 16
@@ -139,9 +146,11 @@ const BIT_S := 8   # +Z
 ## Overall size multiplier on the model's native size (lower this if the tuft
 ## imported bigger than you want; 1.0 = original size).
 @export var grass_scale: float = 0.8
-## Per-blade height variation (0 = every blade the same height, 0.4 = ±40%). A
-## ragged top surface reads far more natural than a uniform sheet of grass.
-@export_range(0.0, 0.9) var grass_height_variation: float = 0.35
+## Per-blade random yaw. 0 = every blade faces the same way, 1 = full 360° random.
+@export_range(0.0, 1.0) var grass_yaw_jitter: float = 1.0
+## Per-blade random size, downward only. 0 = every blade full size, 0.5 = blades
+## range from half size up to full (never larger than grass_scale).
+@export_range(0.0, 0.95) var grass_size_random: float = 0.6
 ## Grass colour (the tips; roots are a touch darker).
 @export var grass_color: Color = Color("6a9b47")
 ## How much blade normals lean toward straight up (0 = raw mesh, 1 = fully up).
@@ -171,7 +180,7 @@ const BIT_S := 8   # +Z
 @export var grass_bend_strength: float = 0.4
 ## Seconds a flattened blade takes to spring back upright after the cat leaves.
 ## Each blade fades on its own timer, so higher = a longer-lingering wake.
-@export var grass_recovery: float = 3.5
+@export var grass_recovery: float = 5.5
 ## Seconds for grass to press flat once stepped on (so a landing eases in rather
 ## than snapping down all at once).
 @export var grass_press_time: float = 0.12
@@ -290,7 +299,7 @@ var _obstacle_built := false
 
 func _ready() -> void:
 	if _sun:
-		_sun.rotation_degrees = Vector3(-50.0, -55.0, 0.0)
+		_sun.rotation_degrees = sun_angle
 	# Fill light from a different angle (no shadows) so surfaces in the sun's cast
 	# shadow still get directional shading instead of flat ambient.
 	if _fill:
@@ -508,6 +517,9 @@ func _build_smooth_terrain() -> void:
 	if is_inf(min_h):
 		min_h = 0.0
 	var base_y := min_h + 0.5 - terrain_side_depth   # how far the side-walls drop
+	# When grass covers the whole terrain, collect the top triangles so grass can be
+	# scattered evenly over the surface (mesh mode) instead of per-tile.
+	var want_grass := grass_on_all_tiles
 	for x in grid_size:
 		for z in grid_size:
 			if not _is_ground(x, z):
@@ -515,6 +527,9 @@ func _build_smooth_terrain() -> void:
 			# Smooth top quad (corners shared with neighbours -> continuous surface).
 			_tri(top, x, z, x, z + 1, x + 1, z + 1)
 			_tri(top, x, z, x + 1, z + 1, x + 1, z)
+			if want_grass:
+				_grass_tris.append(_corner_pos(x, z)); _grass_tris.append(_corner_pos(x, z + 1)); _grass_tris.append(_corner_pos(x + 1, z + 1))
+				_grass_tris.append(_corner_pos(x, z)); _grass_tris.append(_corner_pos(x + 1, z + 1)); _grass_tris.append(_corner_pos(x + 1, z))
 			# Side-walls on edges facing a non-ground tile.
 			if not _is_ground(x - 1, z): _wall(wall, x, z + 1, x, z, base_y, Vector3(-1, 0, 0))
 			if not _is_ground(x + 1, z): _wall(wall, x + 1, z, x + 1, z + 1, base_y, Vector3(1, 0, 0))
@@ -834,16 +849,15 @@ func has_water(tile: Vector2i) -> bool:
 ## Pick the grass tiles (from paint, all-ground, or the explicit list) and hand
 ## them to a GrassField node, which owns the blades and the footprint interaction.
 func _spawn_grass() -> void:
-	# Mesh mode (scene 5): scatter grass directly on the green surface's triangles.
-	if grass_on_map_surface:
-		if _grass_tris.is_empty():
-			return
+	# Mesh mode: scatter grass evenly over collected surface triangles — scene 5's
+	# green map surface (from the map scan) or scene 1's smooth terrain top.
+	if not _grass_tris.is_empty():
 		_grass = load(_GRASS_FIELD_SCRIPT).new()
 		_grass.name = "GrassField"
 		add_child(_grass)
-		_grass.setup_mesh(self, _player, _grid_root, _grass_tris, float(grass_per_tile))
+		_grass.setup_mesh(self, _player, _grid_root, _grass_tris, grass_per_area)
 		return
-	# Tile mode (scenes 1–4): grass on grid tiles.
+	# Tile mode (scene 4 paint / explicit tile lists): grass on grid tiles.
 	var tiles: Array[Vector2i]
 	if grass_on_all_tiles:
 		tiles = _grass_all_ground_tiles()
