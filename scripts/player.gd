@@ -334,6 +334,14 @@ func _process(delta: float) -> void:
 	if _jumping:
 		_advance_jump(delta)
 		return
+	# Freeze while a conversation is on screen: stop, drop any path, rest on tile.
+	if Dialogue.is_active():
+		_moving = false
+		_path.clear()
+		global_position.y = ground_y + _surface(_grid)
+		_set_walking(false)
+		_update_anim_speed()
+		return
 	_jump_cd = maxf(0.0, _jump_cd - delta)
 	# Tap Space to jump (works standing or mid-glide). Gated by the cooldown, and
 	# never mid-push so a crate can't be left half-slid.
@@ -365,6 +373,14 @@ func _process(delta: float) -> void:
 ## The tile to plan a path from: where we're heading if moving, else current.
 func nav_tile() -> Vector2i:
 	return _target_tile if _moving else _grid
+
+## The tile the cat currently occupies (for interaction targeting).
+func grid_tile() -> Vector2i:
+	return _grid
+
+## The last grid direction the cat turned to face (Vector2i.ZERO if none yet).
+func facing_dir() -> Vector2i:
+	return _facing
 
 ## Would the cat be blocked by static geometry on this tile? Uses a small,
 ## symmetric probe (same one the grid wall-check uses) so movement and

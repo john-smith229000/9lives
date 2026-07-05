@@ -1,6 +1,8 @@
-[gd_scene load_steps=3 format=3 uid="uid://cvk3duecn2r40"]
+[gd_scene load_steps=5 format=3 uid="uid://cvk3duecn2r40"]
 
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
+[ext_resource type="PackedScene" path="res://scenes/npc.tscn" id="2_npc"]
+[ext_resource type="Script" path="res://scripts/interactable.gd" id="3_inter"]
 
 [sub_resource type="Environment" id="Env_s1"]
 background_mode = 1
@@ -16,6 +18,7 @@ smooth_terrain = true
 grass_on_all_tiles = true
 block_tiles = Array[Vector2i]([Vector2i(12, 10), Vector2i(12, 11)])
 hint_ball_at_start = true
+hint_ball_text = "Nudge a ball to roll it — just walk into it."
 hole_tiles = Array[Vector2i]([Vector2i(10, 8)])
 water_tiles = Array[Vector2i]([Vector2i(13, 9), Vector2i(14, 9), Vector2i(15, 9), Vector2i(13, 10), Vector2i(14, 10), Vector2i(15, 10), Vector2i(13, 11), Vector2i(14, 11), Vector2i(15, 11)])
 
@@ -35,3 +38,11 @@ block_tilt_extra = 1.5
 ortho_size = 5.0
 zoom_min = 2.0
 zoom_step = 2.0
+
+[node name="Villager" parent="." instance=ExtResource("2_npc")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1, 10)
+
+[node name="Talk" type="Node3D" parent="Villager"]
+script = ExtResource("3_inter")
+speaker = "Villager"
+lines = PackedStringArray("Careful near the water.", "Push a crate in and it floats — you can cross on top of it.")

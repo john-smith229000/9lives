@@ -193,6 +193,9 @@ const BIT_S := 8   # +Z
 ## Spotlight the first ball at level start (outline + camera pan) until it's
 ## shoved for the first time.
 @export var hint_ball_at_start: bool = false
+## Optional tip shown in the hint banner while the ball is spotlighted (blank =
+## none). Cleared when the ball is first shoved.
+@export var hint_ball_text: String = ""
 ## Seconds the camera lingers on the hinted ball before panning back to the cat.
 @export var hint_camera_hold: float = 1.6
 ## Outline colour and hull size (relative; 1.06 = 6% larger = thicker outline).
@@ -241,6 +244,7 @@ const BIT_S := 8   # +Z
 @export var keyhole_clear_radius: float = 0.14
 
 var _npc: NpcDirector                # runtime controller (see npc_director.gd)
+var _interaction: InteractionController   # runtime controller (see interaction.gd)
 var _keyhole: KeyholeEffect          # runtime controller (see keyhole_effect.gd)
 
 var _heights: Array = []
@@ -349,6 +353,13 @@ func _ready() -> void:
 		_npc.name = "NpcDirector"
 		add_child(_npc)
 		_npc.setup(self, grid_size, cell_size, ground_y, npc_walk_speed)
+	# Interaction: added last so its _unhandled_input runs before the camera's,
+	# letting it consume the Interact key (talking never doubles as a camera move).
+	if _player:
+		_interaction = InteractionController.new()
+		_interaction.name = "InteractionController"
+		add_child(_interaction)
+		_interaction.setup(self, _player, cell_size)
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -1118,6 +1129,8 @@ func _setup_click_catcher() -> void:
 func _on_click(event: InputEvent, catcher: Control) -> void:
 	if _camera == null or _player == null:
 		return
+	if Dialogue.is_active():
+		return                               # frozen during a conversation
 	if _player.has_method("is_in_free_mode") and _player.is_in_free_mode():
 		return                               # interior uses free WASD, not click
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
@@ -1551,6 +1564,7 @@ func _start_ball_hint() -> void:
 	if _camera and _camera.has_method("focus_on"):
 		_camera.focus_on(_hint_ball_node)
 		_hint_cam_timer = hint_camera_hold
+	Dialogue.show_hint(hint_ball_text)
 
 func _clear_ball_hint() -> void:
 	if _hint_ball_node == null:
@@ -1560,6 +1574,7 @@ func _clear_ball_hint() -> void:
 	_hint_cam_timer = 0.0
 	if _camera and _camera.has_method("release_focus"):
 		_camera.release_focus()
+	Dialogue.hide_hint()
 
 # --- Rolling balls -------------------------------------------------------
 

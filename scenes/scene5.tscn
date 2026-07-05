@@ -17,6 +17,9 @@ buildings_path = NodePath("Structures")
 block_tiles = Array[Vector2i]([])
 ball_tiles = Array[Vector2i]([])
 
+[node name="Sun" parent="." index="2"]
+light_energy = 0.4
+
 [node name="Player" parent="." index="3"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 1, 100)
 max_walk_step = 1.0

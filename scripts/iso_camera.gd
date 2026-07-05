@@ -92,6 +92,9 @@ func _start_turn() -> void:
 	_rot_t = 0.0
 
 func _unhandled_input(event: InputEvent) -> void:
+	# No camera control while a conversation is on screen.
+	if Dialogue.is_active():
+		return
 	# Mouse middle/wheel scroll: each notch steps the zoom.
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
