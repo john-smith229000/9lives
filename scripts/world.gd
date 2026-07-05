@@ -867,7 +867,7 @@ func _spawn_grass() -> void:
 		_grass = load(_GRASS_FIELD_SCRIPT).new()
 		_grass.name = "GrassField"
 		add_child(_grass)
-		_grass.setup_mesh(self, _player, _grid_root, _grass_tris, grass_per_area)
+		_grass.setup_mesh(self, _player, _grid_root, _grass_tris, grass_per_area, _goal_tiles())
 		return
 	# Tile mode (scene 4 paint / explicit tile lists): grass on grid tiles.
 	var tiles: Array[Vector2i]
@@ -882,7 +882,21 @@ func _spawn_grass() -> void:
 	_grass = load(_GRASS_FIELD_SCRIPT).new()
 	_grass.name = "GrassField"
 	add_child(_grass)
-	_grass.setup(self, _player, _grid_root, tiles)
+	_grass.setup(self, _player, _grid_root, tiles, _goal_tiles())
+
+## The tiles occupied by goal pads (so grass can skip them).
+func _goal_tiles() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for g in _goals:
+		out.append(g["tile"])
+	return out
+
+## The tile of the ball-triggered goal, or (-1, -1) if there isn't one.
+func ball_goal_tile() -> Vector2i:
+	for g in _goals:
+		if g["by"] == "ball":
+			return g["tile"]
+	return Vector2i(-1, -1)
 
 ## Every generated ground tile (holes and water have no ground cube, so skip them).
 func _grass_all_ground_tiles() -> Array[Vector2i]:
@@ -1232,6 +1246,64 @@ func find_path(start: Vector2i, goal: Vector2i) -> Array:
 	while c != start:
 		path.push_front(c)
 		c = came[c]
+	return path
+
+## Public walkability test (for scripted movers like the villager guide).
+func path_walkable(tile: Vector2i) -> bool:
+	_ensure_obstacles()
+	return _path_walkable(tile)
+
+## Shortest walkable path that also MINIMISES the number of turns (so scripted
+## walks look direct, not staircase-y). Dijkstra over (tile, entry-direction)
+## states with cost = turns*1000 + steps. Returns tiles from the first step to
+## `goal`, or [] if unreachable. Grid is small, so the simple frontier is fine.
+func find_path_min_turns(start: Vector2i, goal: Vector2i) -> Array:
+	if start == goal:
+		return []
+	_ensure_obstacles()
+	if not _path_walkable(goal):
+		return []
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	const NONE := 4
+	const INF := 1 << 30
+	var start_state := Vector3i(start.x, start.y, NONE)
+	var best := {start_state: 0}
+	var came := {}
+	var frontier: Array = [[0, start_state]]
+	var goal_state = null
+	while not frontier.is_empty():
+		var mi := 0
+		for i in range(1, frontier.size()):
+			if frontier[i][0] < frontier[mi][0]:
+				mi = i
+		var top: Array = frontier[mi]
+		frontier.remove_at(mi)
+		var cost: int = top[0]
+		var state: Vector3i = top[1]
+		if cost > int(best.get(state, INF)):
+			continue
+		var tile := Vector2i(state.x, state.y)
+		if tile == goal:
+			goal_state = state
+			break
+		for di in 4:
+			var n: Vector2i = tile + dirs[di]
+			if not _path_walkable(n):
+				continue
+			var turn := 1 if (state.z != NONE and di != state.z) else 0
+			var nc: int = cost + turn * 1000 + 1
+			var ns := Vector3i(n.x, n.y, di)
+			if nc < int(best.get(ns, INF)):
+				best[ns] = nc
+				came[ns] = state
+				frontier.append([nc, ns])
+	if goal_state == null:
+		return []
+	var path: Array = []
+	var s: Vector3i = goal_state
+	while s != start_state:
+		path.push_front(Vector2i(s.x, s.y))
+		s = came[s]
 	return path
 
 func _path_walkable(tile: Vector2i) -> bool:

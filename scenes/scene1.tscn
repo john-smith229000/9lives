@@ -1,8 +1,9 @@
-[gd_scene load_steps=5 format=3 uid="uid://cvk3duecn2r40"]
+[gd_scene load_steps=6 format=3 uid="uid://cvk3duecn2r40"]
 
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
 [ext_resource type="PackedScene" path="res://scenes/npc.tscn" id="2_npc"]
 [ext_resource type="Script" path="res://scripts/interactable.gd" id="3_inter"]
+[ext_resource type="Script" path="res://scripts/guide.gd" id="4_guide"]
 
 [sub_resource type="Environment" id="Env_s1"]
 background_mode = 1
@@ -46,3 +47,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 1, 10)
 script = ExtResource("3_inter")
 speaker = "Villager"
 lines = PackedStringArray("Careful near the water.", "Push a crate in and it floats — you can cross on top of it.")
+lines_after = PackedStringArray("See that pad over there?", "Roll a ball on top of it and it'll trigger.")
+
+[node name="Guide" type="Node" parent="Villager"]
+script = ExtResource("4_guide")

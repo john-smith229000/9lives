@@ -37,11 +37,12 @@ func _process(delta: float) -> void:
 			_typing = false
 		_body.visible_characters = n
 		if _typing:
-			_cont.visible = false
+			_cont.modulate.a = 0.0
 	elif _speech.visible:
-		# Retro blinking "next" arrow once the line is fully shown.
+		# Retro blinking "next" arrow once the line is fully shown. Blink via alpha
+		# (not visibility) so the layout never reflows — that was the bobbing.
 		_blink_t += delta
-		_cont.visible = fmod(_blink_t, 0.8) < 0.5
+		_cont.modulate.a = 1.0 if fmod(_blink_t, 0.8) < 0.5 else 0.0
 
 # --- Speech ---------------------------------------------------------------
 
@@ -55,7 +56,7 @@ func show_speech(speaker: String, text: String) -> void:
 	_revealed = 0.0
 	_blink_t = 0.0
 	_typing = true
-	_cont.visible = false
+	_cont.modulate.a = 0.0
 
 ## True while the typewriter is still revealing the current line.
 func is_typing() -> bool:
@@ -65,7 +66,7 @@ func is_typing() -> bool:
 func reveal_all() -> void:
 	_typing = false
 	_body.visible_characters = -1
-	_cont.visible = true
+	_cont.modulate.a = 1.0
 
 func hide_speech() -> void:
 	_speech.visible = false
@@ -105,9 +106,12 @@ func _build() -> void:
 	_body = RichTextLabel.new()
 	_body.bbcode_enabled = false
 	_body.scroll_active = false
-	_body.fit_content = true
-	_body.custom_minimum_size = Vector2(0, 52)
+	# Fixed height (not fit_content): the box never resizes as text reveals or wraps,
+	# so it stays put instead of bobbing.
+	_body.fit_content = false
+	_body.custom_minimum_size = Vector2(0, 66)
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_body.add_theme_font_size_override("normal_font_size", 22)
 	_body.add_theme_color_override("default_color", INK)
 	vb.add_child(_body)

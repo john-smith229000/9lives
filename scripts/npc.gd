@@ -47,6 +47,7 @@ var _anim_t := 0.0                  # manual clip clock (seconds), drives seek
 var _state: State = State.IDLE
 var _idle_left := 0.0
 var _stop_requested := false
+var _height_fn: Callable             # optional: tile -> standing world Y (sloped ground)
 
 ## Called by World right after instancing (after _ready): roam from start_tile.
 func setup_roam(world: Node, start_tile: Vector2i, cell: float, gy: float, speed: float = -1.0) -> void:
@@ -192,17 +193,41 @@ func _update_target() -> void:
 		_dir_target = _tile_world(_path[0])
 
 func _tile_world(tile: Vector2i) -> Vector3:
-	return Vector3(tile.x * _cell, _ground_y, tile.y * _cell)
+	var y := _ground_y
+	if _height_fn.is_valid():
+		y = float(_height_fn.call(tile))
+	return Vector3(tile.x * _cell, y, tile.y * _cell)
+
+## Walk once along an explicit tile path (as from World.find_path), then idle.
+## Used for scripted moves on placed NPCs that have no roaming director.
+## `height_fn(Vector2i) -> float` (optional) gives the standing Y per tile so the
+## NPC follows sloped terrain; otherwise it walks at `gy`.
+func go_to(path: Array, cell: float, gy: float, speed: float, height_fn := Callable()) -> void:
+	_cell = cell
+	_ground_y = gy
+	walk_speed = speed
+	_height_fn = height_fn
+	_cur_tile = Vector2i(roundi(global_position.x / _cell), roundi(global_position.z / _cell))
+	_path = path.duplicate()
+	_stop_requested = false
+	_update_target()
+	if not _path.is_empty():
+		_state = State.STARTING
+		_anim_t = _t_intro
 
 func _move(delta: float, speed: float) -> void:
 	if speed <= 0.0:
 		return
-	var to := _dir_target - global_position
-	to.y = 0.0
-	var dist := to.length()
+	# Move horizontally at `speed`, and ease Y toward the waypoint's height so the
+	# NPC rides sloped ground (roaming targets are flat, so this is a no-op there).
+	var flat := _dir_target - global_position
+	flat.y = 0.0
+	var dist := flat.length()
 	if dist < 0.001:
 		return
-	global_position += (to / dist) * minf(speed * delta, dist)
+	var step := minf(speed * delta, dist)
+	global_position += (flat / dist) * step
+	global_position.y = lerp(global_position.y, _dir_target.y, minf(1.0, step / dist))
 
 func _face_move(dir: Vector3, delta: float) -> void:
 	if _model == null:

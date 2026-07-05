@@ -7,10 +7,17 @@ class_name Interactable
 ## Content lives right here as exported strings so lines can be written/edited in
 ## the Godot inspector with no code.
 
+## Emitted the first time a conversation with this interactable finishes.
+signal talked
+
 ## Name shown above the text (blank = no name line).
 @export var speaker: String = ""
 ## The lines, in order. Each is one press-to-advance screen.
 @export_multiline var lines: PackedStringArray
+## Optional alternate lines used after the first conversation (blank = keep `lines`).
+@export_multiline var lines_after: PackedStringArray
+
+var _talked_once := false
 ## Turn the owner NPC's "Model" child to face the cat when talked to.
 @export var face_player: bool = true
 ## Snap the owner to the tile's ground surface at start (handy on smooth terrain,
@@ -25,12 +32,22 @@ func interact_tile(cell: float) -> Vector2i:
 	var p := global_position
 	return Vector2i(roundi(p.x / cell), roundi(p.z / cell))
 
-## The lines as a plain Array (what Dialogue.start_speech expects).
+## The lines as a plain Array (what Dialogue.start_speech expects). After the first
+## conversation, switches to `lines_after` if any were provided.
 func get_lines() -> Array:
+	var src := lines_after if (_talked_once and not lines_after.is_empty()) else lines
 	var a: Array = []
-	for l in lines:
+	for l in src:
 		a.append(l)
 	return a
+
+## Called by the InteractionController when a conversation with this node closes.
+## Emits `talked` on the first close (for scripted follow-ups).
+func on_conversation_closed() -> void:
+	var first := not _talked_once
+	_talked_once = true
+	if first:
+		talked.emit()
 
 ## Rotate the owner NPC's model to look at `world_pos` (the cat). NPC models here
 ## face +Z, so we add PI to match npc.gd's model_yaw_offset.

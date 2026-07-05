@@ -16,25 +16,33 @@ var _blade_idx: PackedInt32Array = PackedInt32Array()  # instance index inside i
 var _blade_pos: PackedVector3Array = PackedVector3Array()
 var _bins: Dictionary = {}              # tile -> Array of blade ids near it
 var _active: Dictionary = {}            # blade id -> Vector3(bend, dir.x, dir.z) still recovering
+var _exclude: Dictionary = {}           # tiles that get no grass (e.g. goal pads)
 
 ## Tile mode (scenes 1–4): one blade per sub-grid cell of each grass tile.
-func setup(world: World, player: Node3D, grid_root: Node3D, tiles: Array[Vector2i]) -> void:
+func setup(world: World, player: Node3D, grid_root: Node3D, tiles: Array[Vector2i], exclude: Array[Vector2i] = []) -> void:
 	_world = world
 	_player = player
 	_grid_root = grid_root
+	_set_exclude(exclude)
 	var meshes := _blade_meshes()
 	if meshes.is_empty():
 		push_warning("GrassField: no blade meshes (models/blade1.glb ...) found — no grass.")
 		return
 	_build(meshes, _scatter_tiles(meshes, tiles))
 
+func _set_exclude(tiles: Array[Vector2i]) -> void:
+	_exclude.clear()
+	for t in tiles:
+		_exclude[t] = true
+
 ## Mesh mode (scene 5): scatter blades directly over world-space triangles (`tris`,
 ## groups of 3) at `density` blades per m², so grass follows the surface exactly
 ## with no per-tile gaps. Movement + bending stay tile-based (bins below).
-func setup_mesh(world: World, player: Node3D, grid_root: Node3D, tris: PackedVector3Array, density: float) -> void:
+func setup_mesh(world: World, player: Node3D, grid_root: Node3D, tris: PackedVector3Array, density: float, exclude: Array[Vector2i] = []) -> void:
 	_world = world
 	_player = player
 	_grid_root = grid_root
+	_set_exclude(exclude)
 	var meshes := _blade_meshes()
 	if meshes.is_empty():
 		push_warning("GrassField: no blade meshes (models/blade1.glb ...) found — no grass.")
@@ -59,6 +67,8 @@ func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
 		lists.append([])
 	for tile in tiles:
 		if tile.x < 0 or tile.x >= _world.grid_size or tile.y < 0 or tile.y >= _world.grid_size:
+			continue
+		if _exclude.has(tile):
 			continue
 		var top := _world.get_elevation(tile.x, tile.y) + 0.5
 		var cols := maxi(int(ceil(sqrt(float(_world.grass_per_tile)))), 1)
@@ -96,6 +106,10 @@ func _scatter_mesh(meshes: Array, tris: PackedVector3Array, density: float) -> A
 				r2 = 1.0 - r2
 			var t := _blade_xform(rng)
 			t.origin = a + (b - a) * r1 + (c - a) * r2
+			if not _exclude.is_empty():
+				var bt := Vector2i(roundi(t.origin.x / _world.cell_size), roundi(t.origin.z / _world.cell_size))
+				if _exclude.has(bt):
+					continue
 			(lists[rng.randi() % meshes.size()] as Array).append(t)
 	return lists
 
