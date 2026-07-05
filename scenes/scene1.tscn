@@ -3,7 +3,7 @@
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
 [ext_resource type="PackedScene" path="res://scenes/npc.tscn" id="2_npc"]
 [ext_resource type="Script" path="res://scripts/interactable.gd" id="3_inter"]
-[ext_resource type="Script" path="res://scripts/guide.gd" id="4_guide"]
+[ext_resource type="Script" path="res://scripts/scene1_flow.gd" id="4_flow"]
 
 [sub_resource type="Environment" id="Env_s1"]
 background_mode = 1
@@ -18,10 +18,6 @@ sun_angle = Vector3(-20, 120, 0)
 smooth_terrain = true
 grass_on_all_tiles = true
 block_tiles = Array[Vector2i]([Vector2i(12, 10), Vector2i(12, 11)])
-hint_ball_at_start = true
-hint_ball_text = "Nudge a ball to roll it — just walk into it."
-hint_pre_hold = 3.5
-hint_camera_hold = 5.0
 hole_tiles = Array[Vector2i]([Vector2i(10, 8)])
 water_tiles = Array[Vector2i]([Vector2i(13, 9), Vector2i(14, 9), Vector2i(15, 9), Vector2i(13, 10), Vector2i(14, 10), Vector2i(15, 10), Vector2i(13, 11), Vector2i(14, 11), Vector2i(15, 11)])
 
@@ -51,5 +47,5 @@ speaker = "Villager"
 lines = PackedStringArray("Careful near the water.", "Push a crate in and it floats — you can cross on top of it.")
 lines_after = PackedStringArray("See that pad over there?", "Roll a ball on top of it and it'll trigger.")
 
-[node name="Guide" type="Node" parent="Villager"]
-script = ExtResource("4_guide")
+[node name="Flow" type="Node" parent="."]
+script = ExtResource("4_flow")

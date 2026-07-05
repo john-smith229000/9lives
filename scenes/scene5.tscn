@@ -25,7 +25,18 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 1, 100)
 max_walk_step = 1.0
 
 [node name="Camera" parent="." index="4"]
+pitch_deg = null
+yaw_deg = null
+distance = null
 ortho_size = 14.0
+zoom_min = null
+zoom_max = null
+zoom_step = null
+follow_smooth = null
+focus_smooth = null
+rotate_time = null
+near_plane = null
+far_plane = null
 
 [node name="Map" parent="." index="6" unique_id=76739328 instance=ExtResource("2_land")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 99.5, 0, 99.5)

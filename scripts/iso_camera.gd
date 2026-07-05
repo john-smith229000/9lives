@@ -78,12 +78,12 @@ func get_quadrant() -> int:
 ## uses the slower focus_smooth until it arrives.
 func focus_on(node: Node3D) -> void:
 	_focus_target = node
-	_pan_smooth = focus_smooth
+	_pan_smooth = Timing.camera_pan_smooth
 
 ## Return the camera focus to the player, panning back at the slower focus rate.
 func release_focus() -> void:
 	_focus_target = null
-	_pan_smooth = focus_smooth
+	_pan_smooth = Timing.camera_pan_smooth
 
 ## Snap the view back to the default orientation (used on restart).
 func reset_rotation() -> void:

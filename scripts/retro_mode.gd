@@ -20,8 +20,8 @@ const SHRINK := 2
 const MSAA := 3
 ## Grass tuning while retro is on: fraction of blades kept, and fraction of wind
 ## sway kept (less motion = less shimmer). Visuals of each blade are unchanged.
-const GRASS_DENSITY := 0.9
-const GRASS_SWAY := 0.4
+const GRASS_DENSITY := 1.0
+const GRASS_SWAY := 1.0
 ## Colour palette limiting: shades PER channel (lower = more banded/retro).
 ## 5 is roughly a 15-bit PS1-ish palette. Set high (e.g. 256) to disable.
 const COLOR_LEVELS := 8

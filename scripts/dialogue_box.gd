@@ -37,7 +37,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if _typing:
-		_revealed += REVEAL_CPS * delta
+		_revealed += Timing.text_cps * delta
 		var n := int(_revealed)
 		if n >= _body.get_total_character_count():
 			n = _body.get_total_character_count()
@@ -54,9 +54,9 @@ func _process(delta: float) -> void:
 	if _hint.visible:
 		if _hint.modulate.a < 1.0:
 			_hint_fade += delta
-			_hint.modulate.a = minf(1.0, _hint_fade / HINT_FADE_TIME)
+			_hint.modulate.a = minf(1.0, _hint_fade / maxf(Timing.hint_fade, 0.01))
 		if _hint_typing:
-			_hint_revealed += HINT_REVEAL_CPS * delta
+			_hint_revealed += Timing.hint_cps * delta
 			var total := _hint_lbl.text.length()
 			var n := int(_hint_revealed)
 			if n >= total:

@@ -189,24 +189,6 @@ const BIT_S := 8   # +Z
 ## centre and less overall deformation.
 @export var grass_footprint: float = 0.6
 
-@export_group("Hints")
-## Spotlight the first ball at level start (outline + camera pan) until it's
-## shoved for the first time.
-@export var hint_ball_at_start: bool = false
-## Optional tip shown in the hint banner while the ball is spotlighted (blank =
-## none). Cleared when the ball is first shoved.
-@export var hint_ball_text: String = ""
-## Seconds the camera holds on the cat FIRST, before panning over to the ball.
-@export var hint_pre_hold: float = 1.0
-## Seconds the camera lingers on the hinted ball before panning back to the cat.
-@export var hint_camera_hold: float = 1.6
-## Outline colour and hull size (relative; 1.06 = 6% larger = thicker outline).
-@export var hint_outline_color: Color = Color(1.0, 0.92, 0.25)
-@export var hint_outline_scale: float = 1.06
-## Outline opacity pulse: dimmest alpha, and seconds per fade in+out cycle.
-@export var hint_outline_pulse_min: float = 0.60
-@export var hint_outline_pulse_period: float = 2.5
-
 @export_group("Day/Night")
 ## Enable a gameplay-driven day/night cycle. Advance time with the 'cycle_time'
 ## key (T) for testing.
@@ -257,7 +239,7 @@ var _land: Dictionary = {}      # tile -> true, tiles that lie over the map mesh
 var _land_scanned := false
 var _grass_tris: PackedVector3Array = PackedVector3Array()   # green-surface world triangles
 var _blocks: Dictionary = {}    # Vector2i(tile) -> block Node3D
-var _holes: Dictionary = {}     # Vector2i(tile) -> hole Node3D (jump-over gaps)
+var _holes: Dictionary = {}     # set of Vector2i tiles that are jump-over gaps
 var _water: Dictionary = {}     # Vector2i(tile) -> water Node3D
 var _water_stack: Dictionary = {}  # Vector2i(water tile) -> [crate nodes], bottom->top
 var _water_surface := 0.5       # flat world Y of the water top
@@ -278,21 +260,6 @@ var _player_start := Vector3.ZERO   # cat's start position, for Restart
 var _ball_scene: PackedScene
 var _balls: Array = []          # [{node, dir, speed, resting, tile, start}]
 var _ball_radius := 0.375
-
-# --- Hint (spotlight an object until interacted with) ---
-var _hint_ball_node: Node3D = null
-# Intro camera: 0 = idle, 1 = holding on the cat, 2 = holding on the ball.
-var _intro_phase := 0
-var _intro_timer := 0.0
-# Crate hint (triggered after the first NPC talk): outline a crate, fire
-# hint_crate_pushed once it's shoved.
-signal hint_crate_pushed
-var _hint_crate_node: Node3D = null
-var _hint_crate_start := Vector2i.ZERO
-var _hint_crate_active := false
-# Fires once, the first time any ball is shoved.
-signal ball_pushed
-var _ball_pushed_emitted := false
 
 # --- Grass ---
 # Typed as Node (not GrassField) and loaded at runtime, so World doesn't reference
@@ -354,8 +321,6 @@ func _ready() -> void:
 		add_child(_keyhole)
 		_keyhole.setup(_camera, _player, _keyhole_roots(),
 			keyhole_radius, keyhole_softness, keyhole_min_alpha, keyhole_depth_bias, keyhole_clear_radius)
-	if hint_ball_at_start and not _balls.is_empty():
-		_start_ball_hint()
 	if day_night_enabled and _sun:
 		_day_night = DayNightCycle.new()
 		_day_night.name = "DayNightCycle"
@@ -801,27 +766,16 @@ func has_block(tile: Vector2i) -> bool:
 
 # --- Holes (jump-over gaps) -----------------------------------------------
 
-## Place the hole mesh on each hole tile. The model is authored with its top at
-## +0.5 (a tile top), so we sit it at the lowest tile elevation — its top then
-## lines up with the lowest 1 m cube tops and it drops into a pit below.
+## Mark each hole tile. There's no hole mesh anymore (the terrain shows the gap /
+## dirt walls); this just records the tiles so movement treats them as jump-over
+## gaps. The cat can't walk onto a hole, only jump across it.
 func _spawn_holes() -> void:
 	if hole_tiles.is_empty():
 		return
-	var scene: PackedScene = load("res://models/hole.glb")
-	if scene == null:
-		push_warning("World: could not load hole.glb")
-		return
-	var mesh_top := _measure_top(scene)   # align the hole's rim to the ground surface
 	for tile in hole_tiles:
 		if tile.x < 0 or tile.x >= grid_size or tile.y < 0 or tile.y >= grid_size:
 			continue
-		if _holes.has(tile):
-			continue
-		var node := scene.instantiate() as Node3D
-		var surf := float(_heights[tile.x][tile.y]) + 0.5   # this tile's own top
-		node.position = Vector3(tile.x * cell_size, surf - mesh_top, tile.y * cell_size)
-		_grid_root.add_child(node)
-		_holes[tile] = node
+		_holes[tile] = true
 
 ## Is there a hole on this tile? The cat can't walk onto it, only jump over it.
 func has_hole(tile: Vector2i) -> bool:
@@ -1551,8 +1505,6 @@ func _process(delta: float) -> void:
 	_update_goal()
 	_update_crate_heights(delta)
 	_update_balls(delta)
-	_update_intro_camera(delta)
-	_update_crate_hint()
 
 # --- Keyhole see-through --------------------------------------------------
 
@@ -1656,75 +1608,21 @@ func _update_goal() -> void:
 			goal["won"] = false
 			_place_goal(goal, false)
 
-# --- Hint spotlight ------------------------------------------------------
+# --- Scene-object accessors (used by SceneFlow orchestration) ------------
 
-## Outline the first ball and pan the camera to it. The outline stays until the
-## ball is shoved (see _launch_ball); the camera pans back after hint_camera_hold.
-func _start_ball_hint() -> void:
-	_hint_ball_node = _balls[0]["node"]
-	Outline.add(_hint_ball_node, hint_outline_color, hint_outline_scale, hint_outline_pulse_min, hint_outline_pulse_period)
-	# Start held on the cat; _update_intro_camera pans to the ball after hint_pre_hold,
-	# and only then shows the hint (so it doesn't appear before the camera gets there).
-	_intro_phase = 1
-	_intro_timer = hint_pre_hold
+## The first spawned ball's node, or null. Lets a flow spotlight / watch it.
+func first_ball() -> Node3D:
+	if _balls.is_empty():
+		return null
+	return _balls[0]["node"]
 
-## Drive the intro camera: hold on the cat, pan to the ball, then back.
-func _update_intro_camera(delta: float) -> void:
-	if _intro_phase == 0:
-		return
-	_intro_timer -= delta
-	if _intro_timer > 0.0:
-		return
-	if _intro_phase == 1:
-		_intro_phase = 2
-		_intro_timer = hint_camera_hold
-		if _hint_ball_node and _camera and _camera.has_method("focus_on"):
-			_camera.focus_on(_hint_ball_node)
-		Dialogue.show_hint(hint_ball_text)
-	else:
-		_intro_phase = 0
-		if _camera and _camera.has_method("release_focus"):
-			_camera.release_focus()
-
-func _clear_ball_hint() -> void:
-	if _hint_ball_node == null:
-		return
-	Outline.remove(_hint_ball_node)
-	_hint_ball_node = null
-	_intro_phase = 0
-	if _camera and _camera.has_method("release_focus"):
-		_camera.release_focus()
-	Dialogue.hide_hint()
-
-## Outline one crate the same way the ball is spotlighted. When that crate is
-## later shoved, `hint_crate_pushed` fires once (see _update_crate_hint). Called by
-## the villager guide after the first conversation.
-func highlight_hint_crate() -> void:
-	if _hint_crate_active:
-		return
-	var tile: Vector2i
+## A crate node to spotlight: the one on block_tiles[0] if present, else any, else null.
+func first_crate() -> Node3D:
 	if not block_tiles.is_empty() and _blocks.has(block_tiles[0]):
-		tile = block_tiles[0]
-	elif not _blocks.is_empty():
-		tile = _blocks.keys()[0]
-	else:
-		return
-	_hint_crate_node = _blocks[tile]
-	_hint_crate_start = tile
-	_hint_crate_active = true
-	Outline.add(_hint_crate_node, hint_outline_color, hint_outline_scale, hint_outline_pulse_min, hint_outline_pulse_period)
-
-## Watch the hinted crate; once it leaves its start tile, clear the outline and
-## emit hint_crate_pushed (once).
-func _update_crate_hint() -> void:
-	if not _hint_crate_active or _hint_crate_node == null:
-		return
-	var t := Vector2i(roundi(_hint_crate_node.position.x / cell_size), roundi(_hint_crate_node.position.z / cell_size))
-	if t != _hint_crate_start:
-		_hint_crate_active = false
-		Outline.remove(_hint_crate_node)
-		_hint_crate_node = null
-		hint_crate_pushed.emit()
+		return _blocks[block_tiles[0]]
+	if not _blocks.is_empty():
+		return _blocks[_blocks.keys()[0]]
+	return null
 
 # --- Rolling balls -------------------------------------------------------
 
@@ -1808,12 +1706,6 @@ func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
 	ball["target"] = Vector2((cur.x + dir.x * tiles) * cell_size, (cur.y + dir.y * tiles) * cell_size)
 	# Deceleration that stops exactly at the target center, starting at launch speed.
 	ball["decel"] = (ball_launch_speed * ball_launch_speed) / (2.0 * dist)
-	# First shove of the hinted ball clears its spotlight.
-	if ball["node"] == _hint_ball_node:
-		_clear_ball_hint()
-	if not _ball_pushed_emitted:
-		_ball_pushed_emitted = true
-		ball_pushed.emit()
 	return true
 
 func _ball_blocked(tile: Vector2i, self_ball: Dictionary) -> bool:
