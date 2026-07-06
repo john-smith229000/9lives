@@ -385,6 +385,24 @@ func grid_tile() -> Vector2i:
 func facing_dir() -> Vector2i:
 	return _facing
 
+## True while the cat is gliding between tiles.
+func is_moving() -> bool:
+	return _moving
+
+## True on frames the player is giving manual (WASD) movement input — used to
+## cancel an in-progress click-to-interact chase.
+func is_manual_input() -> bool:
+	return _read_dir() != Vector2i.ZERO
+
+## Turn to face a (roughly adjacent) tile — used when arriving at an NPC to talk.
+func face_tile(tile: Vector2i) -> void:
+	var d := tile - _grid
+	var dir := Vector2i(signi(d.x), signi(d.y))
+	if dir.x != 0 and dir.y != 0:                 # diagonal guard: pick the dominant axis
+		dir = Vector2i(signi(d.x), 0) if absi(d.x) >= absi(d.y) else Vector2i(0, signi(d.y))
+	if dir != Vector2i.ZERO:
+		_orient(dir, 0.0)
+
 ## Would the cat be blocked by static geometry on this tile? Uses a small,
 ## symmetric probe (same one the grid wall-check uses) so movement and
 ## pathfinding agree and tight gaps stay passable.

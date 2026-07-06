@@ -40,3 +40,18 @@ var outline_color := Color(1.0, 0.92, 0.25)
 var outline_scale := 1.06
 var outline_pulse_min := 0.60
 var outline_pulse_period := 2.5
+## Hovered-character outline: its own (usually thinner) thickness, and steady (no
+## pulse) — separate from the prop outline above.
+var char_outline_scale := 1.02
+
+# --- Click-to-interact ----------------------------------------------------
+## After clicking an NPC and walking up to them, wait this long before the
+## conversation starts.
+var interact_walk_delay := 0.5
+## Mouse-hover pickup size for NPCs, as a fraction of the viewport height (the
+## radius of the "you're hovering this character" bubble around their body).
+var interact_hover_radius := 0.09
+## World height above an NPC's feet that the hover aims at (roughly mid-body).
+var interact_hover_y := 0.9
+## Seconds before a walking NPC can say its "bump into the cat" line again.
+var bump_cooldown := 6.0

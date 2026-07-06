@@ -93,3 +93,17 @@ func _find_model() -> Node3D:
 	if p and p.has_node("Model"):
 		return p.get_node("Model") as Node3D
 	return null
+
+## The grid direction this character is currently facing (its model's front), or
+## Vector2i.ZERO if unknown. Used so the player walks up to the FRONT of them.
+func front_dir() -> Vector2i:
+	var model := _find_model()
+	if model == null:
+		return Vector2i.ZERO
+	var f := model.global_transform.basis.z    # npc models face local +Z
+	var v := Vector2(f.x, f.z)
+	if v.length() < 0.001:
+		return Vector2i.ZERO
+	if absf(v.x) >= absf(v.y):
+		return Vector2i(1 if v.x >= 0.0 else -1, 0)
+	return Vector2i(0, 1 if v.y >= 0.0 else -1)

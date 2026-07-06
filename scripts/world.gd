@@ -341,7 +341,7 @@ func _ready() -> void:
 		_interaction = InteractionController.new()
 		_interaction.name = "InteractionController"
 		add_child(_interaction)
-		_interaction.setup(self, _player, cell_size)
+		_interaction.setup(self, _player, _camera, cell_size)
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -1120,6 +1120,11 @@ func _on_click(event: InputEvent, catcher: Control) -> void:
 		return                               # interior uses free WASD, not click
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
+	# Clicking a hovered NPC walks up to talk to them instead of moving there.
+	if _interaction and _interaction.try_click_interact():
+		return
+	if _interaction:
+		_interaction.cancel()                # a move-click cancels any NPC chase
 	var tile := _click_to_tile(event.position, catcher.size)
 	if tile.x < 0:
 		return

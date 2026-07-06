@@ -50,7 +50,6 @@ var _stop_requested := false
 var _height_fn: Callable             # optional: tile -> standing world Y (sloped ground)
 var _level: Node                     # the World (found by walking up), for player_tile()
 var _bump_cd := 0.0                  # cooldown so a bump line doesn't repeat every frame
-const BUMP_COOLDOWN := 4.0
 
 ## Called by World right after instancing (after _ready): roam from start_tile.
 func setup_roam(world: Node, start_tile: Vector2i, cell: float, gy: float, speed: float = -1.0) -> void:
@@ -146,7 +145,7 @@ func _do_walking(delta: float) -> void:
 	# hold position, face it, and say a one-off bump line. Resume when it moves.
 	if not _path.is_empty() and _is_player_tile(_path[0]):
 		if _bump_cd <= 0.0 and not Dialogue.is_active():
-			_bump_cd = BUMP_COOLDOWN
+			_bump_cd = Timing.bump_cooldown
 			_speak_bump()
 		_face_move(_dir_target - global_position, delta)
 		return
