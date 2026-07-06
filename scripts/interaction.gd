@@ -28,7 +28,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		if _player is Node3D:
 			it.face_toward((_player as Node3D).global_position)
-		Dialogue.start_speech(it.speaker, it.get_lines(), Callable(it, "on_conversation_closed"))
+		Dialogue.start_speech(it.speaker_name(), it.get_lines(), Callable(it, "on_conversation_closed"), it.voice())
 	elif Dialogue.hint_visible():
 		get_viewport().set_input_as_handled()
 		Dialogue.hide_hint()                    # I also dismisses a standing hint

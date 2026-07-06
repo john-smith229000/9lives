@@ -12,12 +12,18 @@ signal talked
 ## Emitted every time a conversation with this interactable finishes.
 signal conversation_ended
 
-## Name shown above the text (blank = no name line).
+## The character this belongs to (a CharacterProfile). If set, the dialogue box
+## shows their name + plays their voice. Blank = use the plain `speaker` string.
+@export var profile: CharacterProfile
+## Name shown above the text when there's no profile (blank = no name line).
 @export var speaker: String = ""
 ## The lines, in order. Each is one press-to-advance screen.
 @export_multiline var lines: PackedStringArray
 ## Optional alternate lines used after the first conversation (blank = keep `lines`).
 @export_multiline var lines_after: PackedStringArray
+## If set, this Interactable speaks the character's expression of this key instead
+## of `lines` (handy for a placed/roaming character with no scene story lines).
+@export var expression_key: String = ""
 
 var _talked_once := false
 var _use_after := false
@@ -39,11 +45,21 @@ func interact_tile(cell: float) -> Vector2i:
 ## `lines_after` once use_after_lines() has been called (a scripted follow-up),
 ## otherwise the default `lines`.
 func get_lines() -> Array:
+	if expression_key != "" and profile:
+		return profile.expression(expression_key)
 	var src := lines_after if (_use_after and not lines_after.is_empty()) else lines
 	var a: Array = []
 	for l in src:
 		a.append(l)
 	return a
+
+## The name to show above the text: the character's if a profile is set.
+func speaker_name() -> String:
+	return profile.display_name if profile else speaker
+
+## The voice blip to play while typing, or null.
+func voice() -> AudioStream:
+	return profile.voice if profile else null
 
 ## Switch future conversations to `lines_after` (called by a guide once the story
 ## beat that unlocks them happens).

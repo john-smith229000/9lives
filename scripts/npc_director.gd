@@ -16,13 +16,17 @@ var _walk_set: Dictionary = {}          # Vector2i -> true, tiles the NPC may st
 var _walk_list: Array[Vector2i] = []    # same tiles, for random picks
 var _spawned := false
 var _npc_node: Node3D                    # the roaming NPC instance, once spawned
+var _profile: CharacterProfile           # optional: makes the roamer a named character
 
-func setup(world: Node, grid_size: int, cell_size: float, ground_y: float, speed: float) -> void:
+func setup(world: Node, grid_size: int, cell_size: float, ground_y: float, speed: float, profile: CharacterProfile = null) -> void:
 	_world = world
 	_grid = grid_size
 	_cell = cell_size
 	_ground_y = ground_y
 	_speed = speed
+	_profile = profile
+	if profile and profile.walk_speed > 0.0:
+		_speed = profile.walk_speed
 
 ## Spawn is deferred until physics is ready (obstacle probe + floor rays need the
 ## space state) and the World's obstacle map is built, so we poll each frame.
@@ -43,6 +47,14 @@ func _process(_delta: float) -> void:
 	add_child(npc)
 	npc.setup_roam(self, start, _cell, _ground_y, _speed)
 	_npc_node = npc
+	# Make the roamer a named character the player can greet.
+	if _profile:
+		var talk := Interactable.new()
+		talk.name = "Talk"
+		talk.profile = _profile
+		talk.expression_key = "greeting"
+		talk.snap_to_surface = false     # the NPC manages its own position
+		npc.add_child(talk)
 	_spawned = true
 
 ## The tile the roaming NPC currently occupies (nearest tile to its position), or

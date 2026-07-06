@@ -71,6 +71,9 @@ const BIT_S := 8   # +Z
 @export var npc_enabled: bool = false
 ## NPC walk speed (m/s), passed to the spawned NPC.
 @export var npc_walk_speed: float = 1.6
+## Optional character for the roaming NPC (name/voice/expressions). If set, the NPC
+## becomes that character and the player can talk to them for a greeting.
+@export var npc_profile: CharacterProfile
 
 @export_group("Terrain")
 @export var height_gradient: float = 0.1
@@ -331,7 +334,7 @@ func _ready() -> void:
 		_npc = NpcDirector.new()
 		_npc.name = "NpcDirector"
 		add_child(_npc)
-		_npc.setup(self, grid_size, cell_size, ground_y, npc_walk_speed)
+		_npc.setup(self, grid_size, cell_size, ground_y, npc_walk_speed, npc_profile)
 	# Interaction: added last so its _unhandled_input runs before the camera's,
 	# letting it consume the Interact key (talking never doubles as a camera move).
 	if _player:
@@ -1661,6 +1664,10 @@ func _player_tile() -> Vector2i:
 	if _player == null:
 		return Vector2i(-9999, -9999)
 	return Vector2i(roundi(_player.global_position.x / cell_size), roundi(_player.global_position.z / cell_size))
+
+## Public: the tile the cat currently stands on (for NPC collision / bump checks).
+func player_tile() -> Vector2i:
+	return _player_tile()
 
 func _launch_ball(ball: Dictionary, dir: Vector2i) -> bool:
 	var node: Node3D = ball["node"]

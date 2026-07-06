@@ -48,6 +48,9 @@ var _state: State = State.IDLE
 var _idle_left := 0.0
 var _stop_requested := false
 var _height_fn: Callable             # optional: tile -> standing world Y (sloped ground)
+var _level: Node                     # the World (found by walking up), for player_tile()
+var _bump_cd := 0.0                  # cooldown so a bump line doesn't repeat every frame
+const BUMP_COOLDOWN := 4.0
 
 ## Called by World right after instancing (after _ready): roam from start_tile.
 func setup_roam(world: Node, start_tile: Vector2i, cell: float, gy: float, speed: float = -1.0) -> void:
@@ -93,6 +96,12 @@ func _ready() -> void:
 	_anim_t = _t_intro
 
 func _process(delta: float) -> void:
+	_bump_cd = maxf(0.0, _bump_cd - delta)
+	# Stand still (and hold the pose) while a conversation is on screen.
+	if Dialogue.is_active():
+		if _anim and _walk != "":
+			_anim.seek(_anim_t, true)
+		return
 	match _state:
 		State.IDLE:
 			_do_idle(delta)
@@ -133,6 +142,14 @@ func _do_walking(delta: float) -> void:
 			return
 		_anim_t = _t_loop_start + (_anim_t - _t_loop_end)   # wrap the loop
 		_on_loop_complete()
+	# Collision with the cat: never step onto its tile. If we're walking into it,
+	# hold position, face it, and say a one-off bump line. Resume when it moves.
+	if not _path.is_empty() and _is_player_tile(_path[0]):
+		if _bump_cd <= 0.0 and not Dialogue.is_active():
+			_bump_cd = BUMP_COOLDOWN
+			_speak_bump()
+		_face_move(_dir_target - global_position, delta)
+		return
 	# A crate or ball got pushed into the way? Drop this path and find a new route.
 	if not _path.is_empty() and _world != null and _world.has_method("is_blocked") and _world.is_blocked(_path[0]):
 		_path.clear()
@@ -244,6 +261,35 @@ func _flat_dist(p: Vector3) -> float:
 	var d := p - global_position
 	d.y = 0.0
 	return d.length()
+
+## The World (found by walking up the tree), which knows where the cat is. Works
+## for both roaming NPCs and scripted/placed ones.
+func _level_world() -> Node:
+	if _level == null or not is_instance_valid(_level):
+		var n := get_parent()
+		while n != null:
+			if n.has_method("player_tile"):
+				_level = n
+				break
+			n = n.get_parent()
+	return _level
+
+func _is_player_tile(tile: Vector2i) -> bool:
+	var w := _level_world()
+	return w != null and w.player_tile() == tile
+
+## Say this character's "bump" line (from the sibling Talk Interactable's profile).
+func _speak_bump() -> void:
+	var talk := get_node_or_null("Talk")
+	if talk == null:
+		return
+	var prof = talk.get("profile")
+	if prof == null:
+		return
+	var lines: Array = prof.expression("bump")
+	if lines.is_empty():
+		return
+	Dialogue.start_speech(prof.display_name, lines, Callable(), prof.voice)
 
 func _find_anim_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:

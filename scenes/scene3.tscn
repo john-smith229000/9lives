@@ -1,14 +1,16 @@
-[gd_scene format=3 uid="uid://c34n3p8g6hx5p"]
+[gd_scene load_steps=5 format=3 uid="uid://c34n3p8g6hx5p"]
 
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
 [ext_resource type="PackedScene" uid="uid://c6grdh6vqxmfm" path="res://models/scene3_map.glb" id="5_map"]
 [ext_resource type="PackedScene" path="res://models/scene3_buildings.glb" id="6_buildings"]
+[ext_resource type="Resource" path="res://characters/john.tres" id="7_john"]
 
 [node name="World" instance=ExtResource("1_base")]
 generate_terrain = false
 map_path = NodePath("Map")
 buildings_path = NodePath("Buildings")
 npc_enabled = true
+npc_profile = ExtResource("7_john")
 block_tiles = Array[Vector2i]([])
 ball_tiles = Array[Vector2i]([])
 

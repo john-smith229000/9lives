@@ -29,11 +29,21 @@ var _blink_t := 0.0
 var _hint_revealed := 0.0
 var _hint_typing := false
 var _hint_fade := 0.0
+var _voice: AudioStream = null    # per-character typewriter blip
+var _voice_player: AudioStreamPlayer
+var _last_blip := 0               # last character index we played a blip on
+const BLIP_EVERY := 2            # play a blip every N revealed characters
 
 func _ready() -> void:
 	layer = 50
 	_build()
+	_voice_player = AudioStreamPlayer.new()
+	add_child(_voice_player)
 	hide_all()
+
+## Set the voice blip for the next line(s), or null for silent.
+func set_voice(v: AudioStream) -> void:
+	_voice = v
 
 func _process(delta: float) -> void:
 	if _typing:
@@ -43,6 +53,11 @@ func _process(delta: float) -> void:
 			n = _body.get_total_character_count()
 			_typing = false
 		_body.visible_characters = n
+		# Blip while new characters appear (Animal-Crossing style).
+		if _voice and n - _last_blip >= BLIP_EVERY:
+			_last_blip = n
+			_voice_player.stream = _voice
+			_voice_player.play()
 		if _typing:
 			_cont.modulate.a = 0.0
 	elif _speech.visible:

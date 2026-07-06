@@ -21,6 +21,7 @@ var _active := false
 var _started_frame := -1
 var _on_close: Callable
 var _hint_text := ""                  # the standing hint, if any (restored after speech)
+var _lmb_prev := false                # left-mouse state last frame (for click-to-advance)
 
 func _ready() -> void:
 	# The box builds its own UI (see dialogue_box.gd).
@@ -35,7 +36,7 @@ func is_active() -> bool:
 
 ## Begin a blocking conversation. `lines` is an Array of Strings. `on_close` (if
 ## valid) is called once when the conversation ends.
-func start_speech(speaker: String, lines: Array, on_close := Callable()) -> void:
+func start_speech(speaker: String, lines: Array, on_close := Callable(), voice: AudioStream = null) -> void:
 	if lines.is_empty():
 		return
 	_speaker = speaker
@@ -46,6 +47,7 @@ func start_speech(speaker: String, lines: Array, on_close := Callable()) -> void
 	_started_frame = Engine.get_frames_drawn()
 	if _hint_text != "":
 		_box.hide_hint()          # don't stack a hint under the speech box
+	_box.set_voice(voice)
 	_box.show_speech(_speaker, str(_lines[0]))
 
 ## Wipe all conversation/hint state and hide the box. Called on every scene
@@ -78,12 +80,18 @@ func hint_visible() -> bool:
 func _process(_delta: float) -> void:
 	# Poll (rather than _unhandled_input) so advancing works even when the game is
 	# rendered inside a SubViewport (retro mode), where event routing differs.
+	# Track the left-mouse edge every frame so it's never stale when a box opens.
+	var lmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var click_just := lmb and not _lmb_prev
+	_lmb_prev = lmb
 	if not _active:
 		return
 	# Ignore the very press that opened this conversation.
 	if Engine.get_frames_drawn() == _started_frame:
 		return
-	if Input.is_action_just_pressed("interact"):
+	# "I" or a left click advances an open conversation (click never *initiates* one;
+	# only the InteractionController does, on "interact").
+	if Input.is_action_just_pressed("interact") or click_just:
 		_advance()
 
 func _advance() -> void:

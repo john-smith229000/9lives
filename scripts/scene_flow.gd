@@ -54,6 +54,39 @@ func say(speaker: String, lines) -> void:
 	Dialogue.start_speech(speaker, arr)
 	await Dialogue.finished
 
+## Speak story lines AS a character: the text comes from the flow, but the name and
+## voice come from the character. `character` may be a CharacterProfile, an id
+## String ("bob"), or a node with a `profile` (e.g. an Interactable / NPC).
+func say_as(character, lines) -> void:
+	var prof := _profile_of(character)
+	if prof == null:
+		await say("", lines)
+		return
+	var arr: Array = lines if lines is Array else [lines]
+	if arr.is_empty():
+		return
+	Dialogue.start_speech(prof.display_name, arr, Callable(), prof.voice)
+	await Dialogue.finished
+
+## Play a character's own expression (a personality bark keyed by name).
+func express(character, key: String) -> void:
+	var prof := _profile_of(character)
+	if prof == null:
+		return
+	await say_as(prof, prof.expression(key))
+
+## Resolve a CharacterProfile from a profile / id string / node with `profile`.
+func _profile_of(character) -> CharacterProfile:
+	if character is CharacterProfile:
+		return character
+	if character is String or character is StringName:
+		return Characters.get_profile(character)
+	if character is Object:
+		var p = character.get("profile")
+		if p is CharacterProfile:
+			return p
+	return null
+
 ## Player choice (returns the chosen index). Not implemented yet — reserved so
 ## flows can be written choice-first now; currently just shows the prompt.
 func ask(speaker: String, prompt, _choices: Array) -> int:
