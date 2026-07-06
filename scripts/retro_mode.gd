@@ -24,6 +24,6 @@ const GRASS_DENSITY := 1.0
 const GRASS_SWAY := 1.0
 ## Colour palette limiting: shades PER channel (lower = more banded/retro).
 ## 5 is roughly a 15-bit PS1-ish palette. Set high (e.g. 256) to disable.
-const COLOR_LEVELS := 8
+const COLOR_LEVELS := 7
 ## Ordered (Bayer) dithering strength, 0 = off, 1 = full.
 const DITHER := 0.1

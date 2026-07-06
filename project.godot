@@ -18,6 +18,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 SceneManager="*res://scripts/scene_manager.gd"
+GameState="*res://scripts/game_state.gd"
 Timing="*res://scripts/timing.gd"
 Characters="*res://scripts/characters.gd"
 Dialogue="*res://scripts/dialogue.gd"

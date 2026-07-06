@@ -44,6 +44,17 @@ varying float v_hue;    // per-blade warm/cool random (-0.5..0.5)
 varying float v_bright; // per-blade brightness random (-0.5..0.5)
 varying float v_kiss;   // per-blade sun-kiss strength random (0..1)
 varying vec2 v_origin;  // blade world XZ, for large-scale colour patches
+varying vec3 v_world;   // world position of this (displaced) vertex, for object clipping
+varying vec3 v_root;    // this blade's root (instance origin), same for all its fragments
+
+// Solid objects (crates/balls) that CLIP the grass: any fragment inside one of these
+// volumes is discarded, so a blade keeps full height everywhere EXCEPT the exact part
+// that would poke through the mesh — no shortening, no bare tile. Set per-frame by
+// GrassField from the objects' live positions.
+const int CLIP_MAX = 8;
+uniform int clip_count = 0;
+uniform vec4 clip_center[CLIP_MAX];   // xyz = world centre, w = kind (0 = box, 1 = sphere)
+uniform vec4 clip_ext[CLIP_MAX];      // box: xyz half-extents; sphere: x = radius
 
 void vertex() {
 	// 0 at the root, 1 at the tip — how much this vertex sways / how light it is.
@@ -51,6 +62,7 @@ void vertex() {
 	v_mask = h;
 	// Per-tuft phase from its world origin, so they don't all wave in unison.
 	vec3 origin = MODEL_MATRIX[3].xyz;
+	v_root = origin;   // the blade's base, for whole-blade object clipping in fragment()
 	v_hue = fract(sin(dot(origin.xz, vec2(45.11, 12.73))) * 91.377) - 0.5;
 	v_bright = fract(sin(dot(origin.xz, vec2(9.41, 71.53))) * 47843.13) - 0.5;
 	v_kiss = fract(sin(dot(origin.xz, vec2(63.7, 21.31))) * 3571.19);
@@ -77,9 +89,36 @@ void vertex() {
 	// Scale the sway/bend with the blade's own size so small blades don't over-swing.
 	float iscale = length(MODEL_MATRIX[0].xyz);
 	VERTEX += inverse(mat3(MODEL_MATRIX)) * (world_push * iscale);
+	// World position of the displaced vertex, so the fragment stage can clip away just
+	// the part of a blade that sits inside a crate/ball volume.
+	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
+	// Remove grass that a crate/ball covers. Two tests per object:
+	//  (1) whole-blade: if this blade's ROOT sits under the object's footprint (and
+	//      below its top), discard the entire blade — root, middle AND the tip that
+	//      would otherwise poke out the open top.
+	//  (2) per-fragment: also clip just the slice of a blade that leans in through a
+	//      side of the volume (its root is outside, so (1) doesn't catch it).
+	for (int i = 0; i < CLIP_MAX; i++) {
+		if (i >= clip_count) { break; }
+		vec3 c = clip_center[i].xyz;
+		vec3 e = clip_ext[i].xyz;
+		if (clip_center[i].w < 0.5) {                       // box
+			vec3 rd = abs(v_root - c);
+			if (rd.x <= e.x && rd.z <= e.z && v_root.y <= c.y + e.y) { discard; }
+			vec3 d = abs(v_world - c);
+			if (d.x <= e.x && d.y <= e.y && d.z <= e.z) { discard; }
+		} else {                                            // sphere (e.g. a ball)
+			// Keep the blade BELOW the ball's curved underside and cut the part that is
+			// inside it OR above it, following the sphere's lower surface. So grass still
+			// peeks out around the ball's base instead of leaving a bare disc.
+			vec2 rxz = v_world.xz - c.xz;
+			float r2 = dot(rxz, rxz);
+			if (r2 <= e.x * e.x && v_world.y >= c.y - sqrt(max(e.x * e.x - r2, 0.0))) { discard; }
+		}
+	}
 	vec3 col = mix(base_color, tip_color, v_mask);
 	// Warm/cool hue nudge per blade (push red up + blue down for warm, and back).
 	col.r += v_hue * 2.0 * hue_variation;

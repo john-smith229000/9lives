@@ -20,6 +20,13 @@ var world: Node
 var camera: Node
 var player: Node
 
+## Origin tiles for movable props, captured with mark_start() so has_moved() always
+## measures from the TRUE start (not from wherever a beat first happens to look).
+var _start_tiles: Dictionary = {}   # instance_id -> Vector2i
+## Named objectives: id -> Callable() -> bool. Each is a LIVE predicate over world /
+## GameState, so it reads correctly regardless of WHEN (or whether) a beat watched it.
+var _objectives: Dictionary = {}
+
 func _ready() -> void:
 	world = _find_world()
 	if world:
@@ -149,9 +156,107 @@ func tile_of(node: Node3D) -> Vector2i:
 	return Vector2i(roundi(p.x / cell), roundi(p.z / cell))
 
 ## Wait until `node` leaves `from_tile` (e.g. the player pushes a crate or ball).
+## NOTE: prefer mark_start()+has_moved() / a "moved" objective — those measure from
+## the true origin and never deadlock on a push the player already performed. This
+## remains for one-off waits where you truly want "from HERE".
 func until_tile_changes(node: Node3D, from_tile: Vector2i) -> void:
 	while is_instance_valid(node) and tile_of(node) == from_tile:
 		await get_tree().process_frame
+
+# --- Order-independent beats ----------------------------------------------
+# The player can act ahead of the script (shove the crate before being asked, talk
+# early, skip the ball). These helpers make a flow tolerant of that: every gate is
+# "is this ALREADY done? if so skip it; else set up the affordances, wait, tear them
+# down." No stale outlines, no waiting forever on something already finished.
+
+## Record a movable prop's starting tile at scene setup, so has_moved() can always
+## measure from its true origin. Returns the tile. Safe to call with null.
+func mark_start(node: Node3D) -> Vector2i:
+	if node == null:
+		return Vector2i(-1, -1)
+	var t := tile_of(node)
+	_start_tiles[node.get_instance_id()] = t
+	return t
+
+## Has a marked prop left its start tile? A freed/invalid node counts as moved
+## (it's gone, so whatever we were waiting on is over). Unmarked nodes read false.
+func has_moved(node: Node3D) -> bool:
+	if not is_instance_valid(node):
+		return true
+	var id := node.get_instance_id()
+	if not _start_tiles.has(id):
+		return false
+	return tile_of(node) != _start_tiles[id]
+
+## Register a named objective as a LIVE predicate (e.g. func(): return has_moved(crate)).
+## Because it reads real state, is_done()/complete() are correct no matter the order.
+func objective(id: StringName, cond: Callable) -> void:
+	_objectives[id] = cond
+
+## Is a registered objective satisfied right now?
+func is_done(id: StringName) -> bool:
+	var c: Callable = _objectives.get(id, Callable())
+	return c.is_valid() and c.call()
+
+## Await a registered objective (returns instantly if already done). Optionally wake
+## on a signal instead of polling — e.g. complete(&"talked", talk, &"talked").
+func complete(id: StringName, sig_obj: Object = null, sig: StringName = &"") -> void:
+	await until_true(_objectives.get(id, Callable()), sig_obj, sig)
+
+## Wait until `cond` returns true. Returns IMMEDIATELY if it's already true — this is
+## what stops deadlocks on actions the player already did. Wakes on `sig` if given
+## (cheaper than polling), otherwise checks every frame. Re-checks `cond` after each
+## wake, so a one-shot signal that already fired is never required.
+func until_true(cond: Callable, sig_obj: Object = null, sig: StringName = &"") -> void:
+	if not cond.is_valid():
+		return
+	while not cond.call():
+		if sig_obj != null and sig != &"":
+			await Signal(sig_obj, sig)
+		else:
+			await get_tree().process_frame
+
+## Run one objective "beat", doing work ONLY if it isn't already satisfied:
+##   - already complete (player did it early) -> return at once. No stale outline,
+##     no arrow, no wait, no deadlock.
+##   - otherwise -> show the affordances you pass, wait for completion, then tear
+##     every affordance back down.
+## cfg keys (need one completion source; the rest are optional):
+##   objective        : String id registered with objective()   (completion source)
+##   done             : Callable() -> bool                        (completion source)
+##   signal_obj/signal: wake on this signal instead of polling each frame
+##   highlight        : Node3D to outline while waiting
+##   hint             : String tip banner to show while waiting
+##   arrow            : Node3D to float an attention arrow over while waiting
+func beat(cfg: Dictionary) -> void:
+	var cond: Callable = _cond_for(cfg)
+	if cond.is_valid() and cond.call():
+		return
+	var node: Node3D = cfg.get("highlight")
+	if node:
+		highlight(node)
+	var tip: String = cfg.get("hint", "")
+	if tip != "":
+		hint(tip)
+	var arrow: Node3D = null
+	var arrow_over = cfg.get("arrow")
+	if arrow_over is Node3D:
+		arrow = spawn_arrow(arrow_over)
+	await until_true(cond, cfg.get("signal_obj"), cfg.get("signal", &""))
+	if node:
+		unhighlight(node)
+	if tip != "":
+		hide_hint()
+	if arrow and is_instance_valid(arrow):
+		arrow.queue_free()
+
+## Resolve a beat()/objective's completion predicate from cfg.
+func _cond_for(cfg: Dictionary) -> Callable:
+	if cfg.has("done") and cfg["done"] is Callable:
+		return cfg["done"]
+	if cfg.has("objective"):
+		return _objectives.get(cfg["objective"], Callable())
+	return Callable()
 
 # --- NPC movement ---------------------------------------------------------
 

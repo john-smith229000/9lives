@@ -15,6 +15,7 @@ func _on_retro_toggled(on: bool) -> void:
 	RetroMode.active = on   # applies on the next scene you enter
 
 func _on_scene1() -> void:
+	GameState.reset()   # a fresh run: wipe story flags / back to day 1
 	SceneManager.goto_level(1)
 
 func _on_scene2() -> void:

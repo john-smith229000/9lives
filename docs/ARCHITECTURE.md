@@ -82,6 +82,8 @@ This keeps the Player identical across all four levels.
 
 **Player interaction** is per-blade: as the cat walks, the tile it stands on is stamped into each blade's MultiMesh *custom data* (bend amount + push direction), and each blade fades back on its own timer — so footprints trail and recover with no travelling "wave". Jumps only stamp the takeoff/landing tiles (`player.is_airborne()`).
 
+**Crates & balls** *flatten* nearby grass (`world.grass_pressers()`) and *clip* the grass they cover (`world.grass_occluders()`). Each object is sent to the shader as a volume (crate = box, ball = sphere) and clipped with `discard`. A **box** (crate rests on the ground, so its footprint is fully covered) uses a *whole-blade* test — if a blade's root sits under the footprint, the entire blade is dropped, including the tip that would poke out an open top — plus a per-fragment side test for blades leaning in. A **sphere** (ball, whose underside curves up off the ground) instead keeps the blade *below* the ball's lower surface and cuts only the part inside/above it, so grass still peeks out around the ball's base instead of a bare disc. Blades outside the footprint keep full height. `GrassField._update_clip()` uploads the volumes (`clip_center` / `clip_ext` uniforms) each frame from live positions, so it tracks a pushed crate / rolling ball.
+
 ## Shaders
 
 - `grass_wind.gdshader` — wind sway, per-blade footprint bend (from custom data), per-blade color variation, sun-kissed tips, and soft "wrap" lighting so the shadow side isn't crushed.

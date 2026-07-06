@@ -17,6 +17,8 @@ var _blade_pos: PackedVector3Array = PackedVector3Array()
 var _bins: Dictionary = {}              # tile -> Array of blade ids near it
 var _active: Dictionary = {}            # blade id -> Vector3(bend, dir.x, dir.z) still recovering
 var _exclude: Dictionary = {}           # tiles that get no grass (e.g. goal pads)
+const CLIP_MAX := 8                     # must match grass_wind.gdshader's CLIP_MAX
+var _clip_n := 0                        # occluders uploaded last frame (so we can zero once)
 
 ## Tile mode (scenes 1–4): one blade per sub-grid cell of each grass tile.
 func setup(world: World, player: Node3D, grid_root: Node3D, tiles: Array[Vector2i], exclude: Array[Vector2i] = []) -> void:
@@ -244,8 +246,43 @@ func _material(blade_h: float) -> ShaderMaterial:
 	return m
 
 func _process(delta: float) -> void:
+	_update_clip()   # push crate/ball clip volumes to the grass material (they move)
 	if not _active.is_empty() or (not _bins.is_empty() and _player):
 		_update(delta)
+
+## Upload the crate/ball clip volumes to the shared grass materials so the shader can
+## discard grass fragments inside them (see grass_wind.gdshader). Cheap: a handful of
+## uniforms across the per-variant materials, and only while objects exist.
+func _update_clip() -> void:
+	if _mats.is_empty() or not _world.has_method("grass_occluders"):
+		return
+	var occ: Array = _world.grass_occluders()
+	var n: int = mini(occ.size(), CLIP_MAX)
+	if n == 0 and _clip_n == 0:
+		return                              # nothing to clip and nothing to clear
+	var centers: Array = []
+	var exts: Array = []
+	centers.resize(CLIP_MAX)
+	exts.resize(CLIP_MAX)
+	for i in CLIP_MAX:
+		if i < n:
+			var o: Dictionary = occ[i]
+			var c: Vector3 = o["center"]
+			if o.get("box", false):
+				var h: Vector3 = o["half"]
+				centers[i] = Vector4(c.x, c.y, c.z, 0.0)
+				exts[i] = Vector4(h.x, h.y, h.z, 0.0)
+			else:
+				centers[i] = Vector4(c.x, c.y, c.z, 1.0)
+				exts[i] = Vector4(float(o["radius"]), 0.0, 0.0, 0.0)
+		else:
+			centers[i] = Vector4.ZERO
+			exts[i] = Vector4.ZERO
+	for m in _mats:
+		m.set_shader_parameter("clip_count", n)
+		m.set_shader_parameter("clip_center", centers)
+		m.set_shader_parameter("clip_ext", exts)
+	_clip_n = n
 
 ## Per-blade grass wake: fade any flattened blades on their own timer, then press
 ## the grass on the tile under the cat. Only stepped tiles flatten and each recovers

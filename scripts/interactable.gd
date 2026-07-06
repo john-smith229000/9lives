@@ -66,6 +66,13 @@ func voice() -> AudioStream:
 func use_after_lines() -> void:
 	_use_after = true
 
+## Whether this interactable has been talked to at least once. This is PERSISTENT
+## state (unlike the one-shot `talked` signal), so a SceneFlow can gate on it as a
+## live predicate — correct even if the player talked before the flow started
+## watching, or the flow re-checks after the signal already fired.
+func has_talked() -> bool:
+	return _talked_once
+
 ## Called by the InteractionController when a conversation with this node closes.
 ## Emits `talked` on the first close (for scripted follow-ups).
 func on_conversation_closed() -> void:

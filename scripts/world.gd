@@ -251,6 +251,8 @@ var _block_water_dir: Dictionary = {}  # crate instance_id -> Vector2i it was sh
 var _block_starts: Array = []   # [{block, tile}] for restart
 var _block_bottom := -0.375     # crate's lowest point relative to its origin
 var _block_height := 0.75       # crate height (AABB span), for mounting on top
+var _block_half := Vector3(0.375, 0.375, 0.375)  # crate mesh half-extents (grass clip volume)
+var _block_center_off := Vector3.ZERO            # crate mesh centre relative to its origin
 var _crate_scene: PackedScene
 
 # --- Goals ---
@@ -907,6 +909,21 @@ func grass_pressers() -> Array:
 		out.append({"pos": n.global_position, "radius": ball_r})
 	return out
 
+## Solid objects that CLIP the grass: the shader discards any grass fragment inside one
+## of these volumes, so blades keep full height everywhere and only the exact part that
+## would poke through the mesh is removed (no shortening, no bare tile). Crates are
+## boxes, balls are spheres. Uses live positions, so it tracks a pushed crate / rolling
+## ball. GrassField uploads these to the grass material each frame.
+func grass_occluders() -> Array:
+	var out: Array = []
+	for tile in _blocks:
+		var b: Node3D = _blocks[tile]
+		out.append({"box": true, "center": b.global_position + _block_center_off, "half": _block_half})
+	for ball in _balls:
+		var n: Node3D = ball["node"]
+		out.append({"box": false, "center": n.global_position, "radius": _ball_radius})
+	return out
+
 ## Which tiles are painted the grass colour on the map's texture. For each tile
 ## centre we find the map triangle under it, read its UV, sample the texture, and
 ## keep the tile if the colour is close to grass_paint_color.
@@ -1036,21 +1053,27 @@ func _make_crate() -> Node3D:
 	src.queue_free()
 	return holder
 
-## The crate's lowest point relative to its origin, so we can rest it on a tile.
+## The crate's lowest point relative to its origin, so we can rest it on a tile. Also
+## measures the full mesh AABB (half-extents + centre offset) for the grass clip volume.
 func _measure_block_bottom() -> float:
 	var inst := _make_crate()
-	add_child(inst)
-	var min_y := INF
-	var max_y := -INF
+	add_child(inst)                      # placed at this World's origin (position 0)
+	var mn := Vector3(INF, INF, INF)
+	var mx := Vector3(-INF, -INF, -INF)
 	for mi in _all_mesh_instances(inst):
 		var m := mi as MeshInstance3D
 		var box: AABB = m.global_transform * m.get_aabb()
-		min_y = minf(min_y, box.position.y)
-		max_y = maxf(max_y, box.position.y + box.size.y)
+		mn = Vector3(minf(mn.x, box.position.x), minf(mn.y, box.position.y), minf(mn.z, box.position.z))
+		var end := box.position + box.size
+		mx = Vector3(maxf(mx.x, end.x), maxf(mx.y, end.y), maxf(mx.z, end.z))
 	inst.queue_free()
-	if not is_inf(min_y) and not is_inf(max_y):
-		_block_height = max_y - min_y     # crate's full vertical span
-	return -0.375 if is_inf(min_y) else min_y - global_position.y
+	if is_inf(mn.y):
+		return -0.375
+	var o := global_position
+	_block_height = mx.y - mn.y          # crate's full vertical span
+	_block_half = (mx - mn) * 0.5
+	_block_center_off = (mx + mn) * 0.5 - o   # mesh centre relative to the crate origin
+	return mn.y - o.y
 
 func _all_mesh_instances(node: Node, acc: Array = []) -> Array:
 	if node is MeshInstance3D:
