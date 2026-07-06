@@ -97,6 +97,7 @@ var _anim: AnimationPlayer
 var _walk_name := ""    # seamless looping copy, played while moving
 var _rest_name := ""    # original clip; frame 0 is the rest pose for idle
 var _walking := false
+var _footsteps: AudioStreamPlayer   # looping grass_walk; non-positional (cat is always on screen)
 
 # --- Jump (tap Space) ---
 var _jumping := false
@@ -152,7 +153,19 @@ func _ready() -> void:
 	if _model:
 		_model_base_scale = _model.scale
 	_setup_animation()
+	_setup_audio()
 	sync_to_grid()
+
+## Grab the Footsteps player and load it with the looping grass_walk clip from the
+## AudioManager library. It's a plain (non-positional) player: the cat is always
+## the centre of the iso view, so there's nothing to spatialise, and non-positional
+## audio isn't affected by the retro-mode SubViewport (which has no 3D listener).
+func _setup_audio() -> void:
+	_footsteps = get_node_or_null("Footsteps")
+	if _footsteps == null:
+		push_warning("Player: no Footsteps AudioStreamPlayer found.")
+		return
+	AudioManager.configure(_footsteps, &"grass_walk")
 
 ## Recompute the current tile from world X/Z and snap onto the terrain. Called
 ## again by World once the height provider is wired up.
@@ -586,6 +599,10 @@ func _set_walking(walking: bool) -> void:
 	_walking = walking
 	if walking:
 		_anim.play(_walk_name)   # seamless looping walk copy
+		if _footsteps:
+			# Fades in from a random point in the clip; resumes seamlessly if we
+			# were still fading out from a step a moment ago.
+			AudioManager.start_loop(_footsteps, &"grass_walk")
 	else:
 		# Settle on the rest pose (frame 0 of the original clip) while idle,
 		# and level the body back to horizontal.
@@ -593,6 +610,8 @@ func _set_walking(walking: bool) -> void:
 		_anim.seek(0.0, true)
 		_anim.pause()
 		_level_out()
+		if _footsteps:
+			AudioManager.stop_loop(_footsteps)   # fade out, then stop
 
 func _read_dir() -> Vector2i:
 	var base := Vector2i.ZERO

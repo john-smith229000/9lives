@@ -12,6 +12,8 @@ matte_ground = true
 buildings_path = NodePath("Buildings")
 block_tiles = Array[Vector2i]([])
 grass_from_paint = true
+grass_height_zones = true
+cloud_shadows_enabled = true
 day_night_enabled = true
 ball_tiles = Array[Vector2i]([])
 

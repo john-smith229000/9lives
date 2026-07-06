@@ -15,6 +15,11 @@ var _level: Node = null
 var _menu: Node = null
 
 func _ready() -> void:
+	# Keep the window from shrinking so small the low-res stage collapses. The window
+	# is resizable and can go fullscreen (F11 / Alt+Enter); everything scales to fit.
+	var win := get_window()
+	if win:
+		win.min_size = Vector2i(640, 360)
 	# Configure the low-res stage up front. Whether a level actually uses it is
 	# decided per-load in mount_level (RetroMode.active), so the menu toggle applies
 	# on the next scene load.
@@ -36,6 +41,27 @@ func _ready() -> void:
 	SceneManager.set_host(self)
 	# Boot into the main menu.
 	mount_menu(load(SceneManager.MENU))
+
+## Global window shortcuts (work on any scene, menu or level): F11 or Alt+Enter
+## toggles fullscreen. Handled here in the persistent host as unhandled key input, so
+## a focused text field still gets first crack at the key and gameplay/menu input is
+## untouched. The window is resizable and the render pipeline (full-res or the retro
+## SubViewport) already tracks the window size, so fullscreen and free resizing both
+## adapt with no extra work.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var k := event as InputEventKey
+	if k == null or not k.pressed or k.echo:
+		return
+	if k.keycode == KEY_F11 or (k.keycode == KEY_ENTER and k.alt_pressed):
+		_toggle_fullscreen()
+		get_viewport().set_input_as_handled()
+
+func _toggle_fullscreen() -> void:
+	var mode := DisplayServer.window_get_mode()
+	var fs := mode == DisplayServer.WINDOW_MODE_FULLSCREEN \
+		or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	DisplayServer.window_set_mode(
+		DisplayServer.WINDOW_MODE_WINDOWED if fs else DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 ## The level currently on screen (a World), or null on the menu. Used by the
 ## pause menu.

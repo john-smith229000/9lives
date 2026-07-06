@@ -1,0 +1,35 @@
+[gd_scene format=3 uid="uid://bn6scene6harbor0"]
+
+[ext_resource type="PackedScene" uid="uid://cves3n5061ykm" path="res://scenes/level_base.tscn" id="1_base"]
+[ext_resource type="PackedScene" path="res://models/scene6ground.glb" id="2_ground"]
+[ext_resource type="PackedScene" path="res://models/scene6structures.glb" id="3_struct"]
+[ext_resource type="PackedScene" path="res://models/scene6water.glb" id="4_water"]
+
+[node name="World" instance=ExtResource("1_base")]
+grid_size = 100
+generate_terrain = false
+map_path = NodePath("Map")
+matte_ground = true
+follow_map_height = true
+grass_on_map_surface = true
+grass_height_zones = true
+cloud_shadows_enabled = true
+buildings_path = NodePath("Structures")
+block_tiles = Array[Vector2i]([])
+ball_tiles = Array[Vector2i]([])
+
+[node name="Player" parent="." index="3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 1, 50)
+max_walk_step = 1.0
+
+[node name="Camera" parent="." index="4"]
+ortho_size = 12.0
+
+[node name="Map" parent="." index="6" instance=ExtResource("2_ground")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
+
+[node name="Structures" parent="." index="7" instance=ExtResource("3_struct")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
+
+[node name="Water" parent="." index="8" instance=ExtResource("4_water")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)

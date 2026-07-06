@@ -10,6 +10,7 @@ const LEVELS := [
 	"res://scenes/scene3.tscn",
 	"res://scenes/scene4.tscn",
 	"res://scenes/scene5.tscn",
+	"res://scenes/scene6.tscn",
 ]
 
 var _current := ""

@@ -19,6 +19,16 @@ var _active: Dictionary = {}            # blade id -> Vector3(bend, dir.x, dir.z
 var _exclude: Dictionary = {}           # tiles that get no grass (e.g. goal pads)
 const CLIP_MAX := 8                     # must match grass_wind.gdshader's CLIP_MAX
 var _clip_n := 0                        # occluders uploaded last frame (so we can zero once)
+# Height zones: blade variants are grouped into height tiers (short/regular/tall)
+# and each blade picks a tier from the World's height map so areas read as mown,
+# normal or overgrown, with smooth transitions between them. _present_tiers lists
+# the tiers that actually have meshes, in increasing-height order; _tier_meshes
+# maps a tier id to the indices (into the flat mesh list) of that tier's blades.
+const TIER_SHORT := 0
+const TIER_REGULAR := 1
+const TIER_TALL := 2
+var _present_tiers: Array = []
+var _tier_meshes: Dictionary = {}
 
 ## Tile mode (scenes 1–4): one blade per sub-grid cell of each grass tile.
 func setup(world: World, player: Node3D, grid_root: Node3D, tiles: Array[Vector2i], exclude: Array[Vector2i] = []) -> void:
@@ -26,7 +36,7 @@ func setup(world: World, player: Node3D, grid_root: Node3D, tiles: Array[Vector2
 	_player = player
 	_grid_root = grid_root
 	_set_exclude(exclude)
-	var meshes := _blade_meshes()
+	var meshes := _build_blade_tiers()
 	if meshes.is_empty():
 		push_warning("GrassField: no blade meshes (models/blade1.glb ...) found — no grass.")
 		return
@@ -45,7 +55,7 @@ func setup_mesh(world: World, player: Node3D, grid_root: Node3D, tris: PackedVec
 	_player = player
 	_grid_root = grid_root
 	_set_exclude(exclude)
-	var meshes := _blade_meshes()
+	var meshes := _build_blade_tiers()
 	if meshes.is_empty():
 		push_warning("GrassField: no blade meshes (models/blade1.glb ...) found — no grass.")
 		return
@@ -87,7 +97,7 @@ func _scatter_tiles(meshes: Array, tiles: Array[Vector2i]) -> Array:
 			var wx := cx + rng.randf_range(-0.5, 0.5) * sub * _world.grass_jitter
 			var wz := cz + rng.randf_range(-0.5, 0.5) * sub * _world.grass_jitter
 			t.origin = Vector3(wx, _world.grass_surface_y(wx, wz, top), wz)
-			(lists[rng.randi() % meshes.size()] as Array).append(t)
+			(lists[_pick_blade(wx, wz, rng)] as Array).append(t)
 	return lists
 
 ## Fill one transform list per blade variant by scattering uniformly over the mesh
@@ -116,7 +126,7 @@ func _scatter_mesh(meshes: Array, tris: PackedVector3Array, density: float) -> A
 				var bt := Vector2i(roundi(t.origin.x / _world.cell_size), roundi(t.origin.z / _world.cell_size))
 				if _exclude.has(bt):
 					continue
-			(lists[rng.randi() % meshes.size()] as Array).append(t)
+			(lists[_pick_blade(t.origin.x, t.origin.z, rng)] as Array).append(t)
 	return lists
 
 ## Turn per-variant transform lists into MultiMeshInstances + the footprint bins.
@@ -169,32 +179,81 @@ func _build(meshes: Array, lists: Array) -> void:
 		_mms.append(mm)
 		_grid_root.add_child(mmi)
 
-## The mesh from each of models/blade1.glb .. blade5.glb that exists, with its
-## node transform (Blender rotation/scale) baked into the geometry — so the raw
-## MultiMesh mesh is upright and correctly sized even if transforms weren't applied
-## on export (otherwise a rotated/oversized node makes the blades huge and sideways).
-func _blade_meshes() -> Array:
-	var out: Array = []
-	for i in range(1, 6):
-		var path := "res://models/blade%d.glb" % i
-		if not ResourceLoader.exists(path):
-			continue
-		var scene := load(path) as PackedScene
-		if scene == null:
-			continue
-		var inst := scene.instantiate()
-		add_child(inst)                        # so global_transform resolves
-		var mesh: Mesh = null
-		for m in _mesh_instances(inst):
-			var mi := m as MeshInstance3D
-			if mi.mesh:
-				mesh = _bake_mesh(mi.mesh, mi.global_transform)
-				break
-		remove_child(inst)
-		inst.queue_free()
-		if mesh:
-			out.append(mesh)
-	return out
+## Load every blade variant into height tiers and return them as one flat list (the
+## order _build/_material expect). Regular blades are models/blade1..5.glb; the
+## shorter set is blade_s1..5.glb and the taller set blade_t1..6.glb. Height zones
+## are only assembled when the World turns them on AND the extra sets exist —
+## otherwise just the regular blades load, so every other scene behaves as before.
+## _present_tiers / _tier_meshes are filled here for _pick_blade to draw from.
+func _build_blade_tiers() -> Array:
+	_present_tiers = []
+	_tier_meshes = {}
+	var flat: Array = []
+	var zones: bool = _world.grass_height_zones if "grass_height_zones" in _world else false
+	# (tier id, filename prefix, first index, last index), shortest tier first.
+	var sets := [
+		[TIER_SHORT, "blade_s", 1, 5],
+		[TIER_REGULAR, "blade", 1, 5],
+		[TIER_TALL, "blade_t", 1, 6],
+	]
+	for s in sets:
+		var tier_id: int = s[0]
+		if not zones and tier_id != TIER_REGULAR:
+			continue                            # zones off: regular blades only
+		var idxs := PackedInt32Array()
+		for i in range(int(s[2]), int(s[3]) + 1):
+			var mesh := _load_blade_mesh("res://models/%s%d.glb" % [s[1], i])
+			if mesh:
+				idxs.append(flat.size())
+				flat.append(mesh)
+		if not idxs.is_empty():
+			_present_tiers.append(tier_id)
+			_tier_meshes[tier_id] = idxs
+	return flat
+
+## Load one blade .glb and bake its node transform (Blender rotation/scale) into the
+## geometry — so the raw MultiMesh mesh is upright and correctly sized even if
+## transforms weren't applied on export (otherwise a rotated/oversized node makes
+## the blades huge and sideways). Returns null if the file is missing or has no mesh.
+func _load_blade_mesh(path: String) -> Mesh:
+	if not ResourceLoader.exists(path):
+		return null
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return null
+	var inst := scene.instantiate()
+	add_child(inst)                            # so global_transform resolves
+	var mesh: Mesh = null
+	for m in _mesh_instances(inst):
+		var mi := m as MeshInstance3D
+		if mi.mesh:
+			mesh = _bake_mesh(mi.mesh, mi.global_transform)
+			break
+	remove_child(inst)
+	inst.queue_free()
+	return mesh
+
+## Pick which blade mesh (index into the flat list) grows at world XZ. The World's
+## height map gives a value 0..1 (short..tall); we map it onto the tiers that exist
+## and, right at a tier boundary, choose between the two neighbouring tiers at random
+## in proportion to how far across the boundary we are. A smooth height gradient in
+## the map therefore becomes a smoothly shifting mix of short/regular/tall blades —
+## the gradation — rather than a hard line. With one tier (zones off) it's uniform.
+func _pick_blade(wx: float, wz: float, rng: RandomNumberGenerator) -> int:
+	var n := _present_tiers.size()
+	if n <= 1:
+		var only: PackedInt32Array = _tier_meshes[_present_tiers[0]]
+		return only[rng.randi() % only.size()]
+	var h := 0.5
+	if _world.has_method("grass_height_at"):
+		h = clampf(_world.grass_height_at(wx, wz), 0.0, 1.0)
+	var p := h * float(n - 1)                  # position along the present tiers
+	var lo := int(floor(p))
+	var hi := mini(lo + 1, n - 1)
+	var frac := p - float(lo)
+	var tier_id: int = _present_tiers[hi] if rng.randf() < frac else _present_tiers[lo]
+	var pool: PackedInt32Array = _tier_meshes[tier_id]
+	return pool[rng.randi() % pool.size()]
 
 ## Return a new ArrayMesh with `xf` baked into surface 0's positions and normals.
 func _bake_mesh(mesh: Mesh, xf: Transform3D) -> ArrayMesh:
@@ -243,6 +302,9 @@ func _material(blade_h: float) -> ShaderMaterial:
 	m.set_shader_parameter("tip_kiss", _world.grass_tip_kiss)
 	m.set_shader_parameter("shadow_lift", _world.grass_shadow_lift)
 	m.set_shader_parameter("bend_strength", _world.grass_bend_strength)
+	# The shared cloud-shadow drift (no-op when cloud shadows are disabled).
+	if _world.has_method("apply_cloud_params"):
+		_world.apply_cloud_params(m)
 	return m
 
 func _process(delta: float) -> void:

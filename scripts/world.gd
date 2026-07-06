@@ -192,6 +192,48 @@ const BIT_S := 8   # +Z
 ## centre and less overall deformation.
 @export var grass_footprint: float = 0.6
 
+@export_subgroup("Height Zones")
+## Vary grass height across the field using three blade sets — short
+## (models/blade_s*.glb), regular (blade*.glb) and tall (blade_t*.glb) — blended so
+## some areas read as mown, some normal and some overgrown, with smooth transitions.
+## Off = only the regular blades grow (the original look). Any set that's missing is
+## simply skipped, so it degrades gracefully.
+@export var grass_height_zones: bool = false
+## Grayscale map that paints grass height: black = short, mid-grey = regular, white =
+## tall (values in between blend the sets). Sampled in world space, stretched across
+## the whole grid (0,0 = one corner, grid_size*cell_size = the far corner). Leave
+## empty to use a procedural noise pattern instead — handy until a map is painted.
+@export var grass_height_map: Texture2D
+## Flip the height map's V (Z) axis if the short/tall zones land mirrored.
+@export var grass_height_map_flip_v: bool = false
+## Feature size of the fallback noise used when no height map is set (higher = smaller,
+## more frequent short/tall patches).
+@export var grass_height_noise_frequency: float = 0.06
+## Shift the whole field shorter (below 0.5) or taller (above 0.5). 0.5 = use the map
+## / noise as-is.
+@export_range(0.0, 1.0) var grass_height_bias: float = 0.5
+
+@export_group("Cloud Shadows")
+## Drifting cloud shadows across the whole scene: a scrolling noise pattern dims the
+## ground, buildings, water, props and grass together (no physical cloud meshes, so
+## nothing clips the camera). Off = no cloud shadows.
+@export var cloud_shadows_enabled: bool = false
+## How dark the deepest part of a cloud shadow gets (0 = none, 1 = black).
+@export_range(0.0, 1.0) var cloud_shadow_strength: float = 0.10
+## How much of the map sits in shadow at once (higher = more overcast).
+@export_range(0.0, 1.0) var cloud_shadow_coverage: float = 0.5
+## Feather width of a shadow's edge (higher = softer, blurrier cloud edges).
+@export_range(0.0, 0.5) var cloud_shadow_softness: float = 0.15
+## World size of the clouds: smaller = larger, sparser cloud blobs.
+@export var cloud_shadow_scale: float = 0.014
+## How fast the clouds drift.
+@export var cloud_shadow_speed: float = 0.015
+## Direction the clouds drift across the world (XZ).
+@export var cloud_shadow_dir: Vector2 = Vector2(1.0, 0.4)
+## Notional cloud height: how far the shadow is offset from what casts it along the
+## sun direction (0 = straight down). Higher = shadows slide further under a low sun.
+@export var cloud_shadow_height: float = 12.0
+
 @export_group("Day/Night")
 ## Enable a gameplay-driven day/night cycle. Advance time with the 'cycle_time'
 ## key (T) for testing.
@@ -272,6 +314,17 @@ var _ball_radius := 0.375
 # compile-time cycle would stop GrassField from registering.
 var _grass: Node                # runtime controller (see grass_field.gd)
 const _GRASS_FIELD_SCRIPT := "res://scripts/grass_field.gd"
+# Loaded by path (not CloudShadows.new()) so World doesn't reference the class at
+# parse time — CloudShadows references World back, and the cycle would stop it
+# registering (same reason as the grass field above).
+const _CLOUD_SHADOWS_SCRIPT := "res://scripts/cloud_shadows.gd"
+# Grass height zones: lazily-built sources for grass_height_at() — the decoded map
+# image (if one is assigned) or a noise field (the fallback when none is).
+var _grass_height_img: Image
+var _grass_height_noise: FastNoiseLite
+# Cloud shadows: the shared drifting-cloud texture + the runtime overlay controller.
+var _cloud_tex: Texture2D
+var _cloud_shadows: Node
 
 @onready var _grid_root: Node3D = $Grid
 @onready var _player: CharacterBody3D = $Player
@@ -344,6 +397,13 @@ func _ready() -> void:
 		_interaction.name = "InteractionController"
 		add_child(_interaction)
 		_interaction.setup(self, _player, _camera, cell_size)
+	# Cloud shadows LAST: attach the overlay to whatever material is active on each
+	# mesh now (after keyhole has swapped in its building materials, grass exists, etc.).
+	if cloud_shadows_enabled:
+		_cloud_shadows = load(_CLOUD_SHADOWS_SCRIPT).new()
+		_cloud_shadows.name = "CloudShadows"
+		add_child(_cloud_shadows)
+		_cloud_shadows.setup(self, self)
 
 ## Generate trimesh collision for a custom map mesh (Scene 3) so grid movement
 ## is blocked by its walls/features.
@@ -855,6 +915,73 @@ func _spawn_grass() -> void:
 	_grass.name = "GrassField"
 	add_child(_grass)
 	_grass.setup(self, _player, _grid_root, tiles, _goal_tiles())
+
+## Grass height at a world XZ, 0 (short) .. 1 (tall), for GrassField to pick a blade
+## tier. Reads the grayscale height map stretched across the grid if one is assigned,
+## otherwise a procedural noise field so the zones show up before a map is painted.
+## Returns 0.5 (plain regular grass) when height zones are off. grass_height_bias
+## nudges the whole field shorter/taller.
+func grass_height_at(wx: float, wz: float) -> float:
+	if not grass_height_zones:
+		return 0.5
+	var t := 0.5
+	if grass_height_map:
+		if _grass_height_img == null:
+			_grass_height_img = grass_height_map.get_image()
+			if _grass_height_img and _grass_height_img.is_compressed():
+				_grass_height_img.decompress()
+		if _grass_height_img:
+			var span := maxf(float(grid_size) * cell_size, 0.001)
+			var u := clampf(wx / span, 0.0, 1.0)
+			var v := clampf(wz / span, 0.0, 1.0)
+			if grass_height_map_flip_v:
+				v = 1.0 - v
+			var iw := _grass_height_img.get_width()
+			var ih := _grass_height_img.get_height()
+			var px := clampi(int(u * float(iw - 1)), 0, iw - 1)
+			var py := clampi(int(v * float(ih - 1)), 0, ih - 1)
+			t = _grass_height_img.get_pixel(px, py).get_luminance()
+	else:
+		if _grass_height_noise == null:
+			_grass_height_noise = FastNoiseLite.new()
+			_grass_height_noise.seed = terrain_seed + 91
+			_grass_height_noise.frequency = grass_height_noise_frequency
+			_grass_height_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		t = _grass_height_noise.get_noise_2d(wx, wz) * 0.5 + 0.5
+	# Bias shifts the whole field: 0.5 leaves it as-is, lower shortens, higher lengthens.
+	return clampf(t + (grass_height_bias - 0.5) * 2.0, 0.0, 1.0)
+
+## The shared drifting-cloud texture, built once (seamless so it tiles across the
+## whole map). Generated synchronously into an ImageTexture so it's ready the first
+## frame (unlike NoiseTexture2D, which fills in on a thread).
+func cloud_texture() -> Texture2D:
+	if _cloud_tex == null:
+		var n := FastNoiseLite.new()
+		n.seed = terrain_seed + 4242
+		n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		n.frequency = 0.02
+		n.fractal_octaves = 4
+		var img := n.get_seamless_image(256, 256)
+		_cloud_tex = ImageTexture.create_from_image(img)
+	return _cloud_tex
+
+## Copy the cloud-shadow settings onto a ShaderMaterial (the grass material or the
+## overlay pass), so every clouded surface samples the same drifting pattern. When
+## cloud shadows are off, strength is forced to 0 so the effect vanishes cleanly.
+func apply_cloud_params(m: ShaderMaterial) -> void:
+	m.set_shader_parameter("cloud_tex", cloud_texture())
+	m.set_shader_parameter("cloud_strength", cloud_shadow_strength if cloud_shadows_enabled else 0.0)
+	m.set_shader_parameter("cloud_coverage", cloud_shadow_coverage)
+	m.set_shader_parameter("cloud_softness", cloud_shadow_softness)
+	m.set_shader_parameter("cloud_scale", cloud_shadow_scale)
+	m.set_shader_parameter("cloud_speed", cloud_shadow_speed)
+	m.set_shader_parameter("cloud_dir", cloud_shadow_dir.normalized() if cloud_shadow_dir.length() > 0.001 else Vector2(1, 0))
+	m.set_shader_parameter("cloud_height", cloud_shadow_height)
+	# Skew the cast along the sun's travel direction (its local -Z, flattened to XZ).
+	var b := Basis.from_euler(Vector3(deg_to_rad(sun_angle.x), deg_to_rad(sun_angle.y), deg_to_rad(sun_angle.z)))
+	var d: Vector3 = -b.z
+	var xz := Vector2(d.x, d.z)
+	m.set_shader_parameter("cloud_light_xz", xz.normalized() if xz.length() > 0.001 else Vector2.ZERO)
 
 ## The tiles occupied by goal pads (so grass can skip them).
 func _goal_tiles() -> Array[Vector2i]:
@@ -1596,6 +1723,11 @@ func _float_stack(tile: Vector2i, delta: float) -> void:
 		if idx == 0:
 			# Bottom: float with a decaying bob + an entry-dive that eases to level.
 			var id := crate.get_instance_id()
+			# First frame this crate is over the water tile (not yet tracked) = the
+			# moment it plops in, so play the splash once. Non-positional so it's
+			# heard in retro mode (the SubViewport has no 3D audio listener).
+			if not _block_water.has(id):
+				AudioManager.play_2d(&"water_splash")
 			var t: float = float(_block_water.get(id, 0.0)) + delta
 			_block_water[id] = t
 			var amp := water_bob_settle + (water_bob_amplitude - water_bob_settle) * exp(-water_bob_decay * t)

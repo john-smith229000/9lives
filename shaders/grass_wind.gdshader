@@ -5,6 +5,11 @@ shader_type spatial;
 // fine in the GL Compatibility renderer. Give the tuft its base at local Y = 0.
 render_mode cull_disabled;   // thin blades are visible from both sides
 
+// Whole-scene cloud shadows: same drifting pattern the ground uses (see
+// cloud_overlay.gdshader), baked straight into the blades so grass dims in step
+// with the terrain under it.
+#include "res://shaders/cloud_shadow.gdshaderinc"
+
 // Wind (world-space direction, so all tufts lean together even if randomly turned).
 uniform vec2 wind_dir = vec2(1.0, 0.3);
 uniform float wind_strength = 0.12;   // tip displacement in metres
@@ -130,6 +135,8 @@ void fragment() {
 	// Sun-kissed tips: warm highlight concentrated at the very top of the blade,
 	// its strength varying per blade so some catch the light more than others.
 	col = mix(col, tip_highlight, pow(v_mask, 3.0) * tip_kiss * mix(0.3, 1.3, v_kiss));
+	// Whole-scene cloud shadow: dim the blade where a cloud is passing over it.
+	col *= cloud_shadow_factor(v_world, TIME);
 	ALBEDO = clamp(col, vec3(0.0), vec3(1.0));
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
