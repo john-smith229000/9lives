@@ -11,8 +11,7 @@
 Your dearest friend — a grey-and-white cat, **[FRIEND NAME]** — is sick, and
 getting worse. There's no one in the little harbor town of **[TOWN NAME]** who can
 help; the nearest help only comes by sea. The one hope is the **[SHIP NAME]**, due
-to dock *tomorrow*, carrying **[a traveling vet / the medicine / a specialist]
-(choose)** — though early on you may not even know that yet; part of the first days
+to dock *tomorrow*, carrying a **traveling vet** — though early on you may not even know that yet; part of the first days
 is realizing the ship is your only chance.
 
 You're an orange cat, and you love your friend more than anything. You are terrified
@@ -72,7 +71,8 @@ quietly contrasts the player's refusal to give up. Let players infer; leave room
   NPC positions) — *except* for the things the story says should stay changed.
 - **Some progress persists** (see §6): repairs you've made, key items you hold, and
   relationship/story flags. This is what makes fetch quests and "I mended this for
-  good" possible. **(choose how generous to be — see §6.)**
+  good" possible. **Model: HYBRID (chosen)** — knowledge always persists; specific
+  story repairs + key items persist via `GameState` flags; puzzle props reset per loop.
 
 ---
 
@@ -110,8 +110,11 @@ One persistent island/harbor-town map. Locations (all TODO to place):
   (choose):** (a) earn the keeper's trust/key by helping care for their loved one,
   then climb and light it yourself (after the repair chain); (b) free the keeper up
   so *they* can do it; (c) both — gain access via the keeper's arc, then fix + light
-  it through the town's repair chain. Keeper's loved one: **[TODO — person? another
-  cat? a child who'd normally have sailed out?]**
+  it through the town's repair chain. Keeper's loved one: their **sick partner**, whom the
+  keeper cares for **alone** — a clean mirror of the player (see `docs/story/cast.md`,
+  `docs/story/continuity_audit.md`). The keeper being the *sole* caretaker is what makes it
+  impossible for them to leave for the restoration + all-night vigil the beacon needs — which
+  is exactly why only the free-to-roam player can do it.
 - **Fishmonger** — tides/weather knowledge; a clue or key item source.
 - **Bookseller / barista** — the town's memory; helps the cat connect the dots.
 - **Cook** — routines; feeds people; a schedule-based (but trigger, not clock) gate.
@@ -179,14 +182,34 @@ Resolved: core conflict (save the sick friend), the loop cause (unexplained
 emotional time-freeze), the day-end trigger (sleep beside the friend), and the
 puzzle spine (light the beacon so the ship can dock).
 
+Resolved (see `docs/story/day1.md` and `docs/story/cast.md` for the fleshed Day 1 + arcs):
+
+- **What's aboard the ship / when learned** → a **traveling vet**; the cat pieces it
+  together around **Day 2–3**. Day 1 only feels that the town can't help.
+- **Persistence** → **HYBRID**: knowledge always; story repairs + key items persist
+  via flags; puzzle props (crates, balls, NPC spots) reset each loop.
+- **The loop is imperfect** → the town resets, but the **friend slips a little each loop**
+  (lethargy; stops eating the fish you bring). A soft dread-clock, shown in dialogue/
+  behaviour only — never a fail state. Staying in the loop isn't safe, which is what
+  eventually forces the choice to let tomorrow come. See `docs/story/arc.md`.
+- **The ship** → the town's **regular lifeline run** (supplies, mail, a circuit vet), not
+  something summoned. It can't **dock** (berth fouled) or **find the mouth** (beacon dark),
+  and its approach falls on the **night high tide** (the deep berth only floods then), so it
+  must thread a fogged, rocky mouth in the dark — without the light it turns back. This is
+  also why the town is withering (lifeline stopped, cut off **weeks/a season**, not years).
+- **What breaks the loop** → lighting the beacon + clearing the berth is **necessary but not
+  sufficient**; the loop is bound to the cat's refusal, and breaks only when the cat
+  **chooses** to let tomorrow come (Day 8). Day 9 is the released tomorrow.
+- **The keeper** → **sole** caretaker of a **sick partner** (mirror of the player); the
+  mother is a separate "waiting on the sea" townsperson. See `docs/story/continuity_audit.md`.
+- **Communication** → **cats never speak** — only cat noises + body language (the player,
+  the friend, any cat characters). The **player has inner monologue** (the narration). Any
+  non-cat townsfolk may speak in words. **Cat-to-cat beats and item exchanges are wordless**
+  (e.g. the fish handoff, curling up with the sick partner). Never write cat dialogue.
+
 Still open:
 
-- **What's aboard the ship**, exactly (traveling vet / medicine / specialist), and
-  when does the cat *learn* the ship is the hope — day 1, or a day-2 discovery?
-- **Why did the lighthouse keeper stop** tending the light?
-- **Names:** town, ship, the two cats, the townsfolk.
-- **Does any physical progress persist**, or is it knowledge-only until day 9? Still
-  the biggest system-shaping choice (§2/§6). *Note: fetch quests + "I mended this"
-  lean toward persistence.*
+- **Why did the lighthouse keeper stop** tending the light? (grief / illness / gave up)
+- **Names:** town, ship, the two cats, the townsfolk (James is a placeholder).
 - **The ending's tone** — does the friend clearly recover, and does the cat ever
   understand what it did? (Worth deciding early; it colors everything.)
