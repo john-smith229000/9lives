@@ -43,6 +43,7 @@ docs/
 | **quest_web.md** | The interconnected quest web (dependency graph) and the nine-day rhythm. |
 | **chain_quests.md** | Days 4–7 puzzle designs: each townsperson's problem as a concrete puzzle (objects, steps, timing, unlock) + story beat. |
 | **task_ladder.md** | Day-by-day accounting: every task mapped to what it pays (Info/Access/Part/Fuel/Goodwill/Comfort), the goal it advances, the flag, and a running G1 checklist. |
+| **clue_journal.md** | The investigation system: the Journal (the cat's memory, persists across the loop), clues + deductions, the journal UI, and how clues gate progress. |
 | **locations_and_interiors.md** | Which buildings you can enter and how (doorway → free-move interior); the outdoor-grid vs indoor-free-move principle; interior contents per building. |
 | **town_structures.md** | Physical catalog of every structure: geography/silhouette, materials & palette, per-structure details, and the broken→mended "town heals" states tied to persistence flags. |
 | **objects_and_kinetics.md** | Carried items + kinetic objects (crates, barrels, buoy, etc.) with in-world reasons; signposted phase gates. |
