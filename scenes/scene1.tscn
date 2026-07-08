@@ -2,8 +2,8 @@
 
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
 [ext_resource type="PackedScene" path="res://scenes/npc.tscn" id="2_npc"]
-[ext_resource type="Script" path="res://scripts/interactable.gd" id="3_inter"]
-[ext_resource type="Script" path="res://scripts/scene1_flow.gd" id="4_flow"]
+[ext_resource type="Script" path="res://scripts/interaction/interactable.gd" id="3_inter"]
+[ext_resource type="Script" path="res://scripts/flow/scene1_flow.gd" id="4_flow"]
 [ext_resource type="Resource" path="res://characters/bob.tres" id="5_bob"]
 
 [sub_resource type="Environment" id="Env_s1"]

@@ -1,8 +1,8 @@
 [gd_scene format=3 uid="uid://c34n3p8g6ix5p"]
 
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
-[ext_resource type="PackedScene" uid="uid://ksbuewhg7kwd" path="res://models/scene4.glb" id="5_map"]
-[ext_resource type="PackedScene" uid="uid://o53yxqt5crva" path="res://models/scene4_buildings.glb" id="6_buildings"]
+[ext_resource type="PackedScene" uid="uid://ksbuewhg7kwd" path="res://models/scenes/scene4/scene4.glb" id="5_map"]
+[ext_resource type="PackedScene" uid="uid://o53yxqt5crva" path="res://models/scenes/scene4/scene4_buildings.glb" id="6_buildings"]
 
 [node name="World" instance=ExtResource("1_base")]
 grid_size = 30

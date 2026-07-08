@@ -1,10 +1,10 @@
 [gd_scene format=3 uid="uid://bsbc88bp2lgps"]
 
 [ext_resource type="PackedScene" uid="uid://cves3n5061ykm" path="res://scenes/level_base.tscn" id="1_base"]
-[ext_resource type="PackedScene" uid="uid://ckytpaca8dd28" path="res://models/scene5land.glb" id="2_land"]
-[ext_resource type="PackedScene" uid="uid://dl8nqp47wukvf" path="res://models/scene5structures.glb" id="3_struct"]
-[ext_resource type="PackedScene" uid="uid://c6ty73rwdsij" path="res://models/scene5sea.glb" id="4_sea"]
-[ext_resource type="PackedScene" uid="uid://budq5eerm5bvm" path="res://models/scene5grid.glb" id="5_grid"]
+[ext_resource type="PackedScene" uid="uid://ckytpaca8dd28" path="res://models/scenes/scene5/scene5land.glb" id="2_land"]
+[ext_resource type="PackedScene" uid="uid://dl8nqp47wukvf" path="res://models/scenes/scene5/scene5structures.glb" id="3_struct"]
+[ext_resource type="PackedScene" uid="uid://c6ty73rwdsij" path="res://models/scenes/scene5/scene5sea.glb" id="4_sea"]
+[ext_resource type="PackedScene" uid="uid://budq5eerm5bvm" path="res://models/scenes/scene5/scene5grid.glb" id="5_grid"]
 
 [node name="World" unique_id=996718436 instance=ExtResource("1_base")]
 grid_size = 200

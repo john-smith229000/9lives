@@ -1,35 +1,72 @@
-[gd_scene format=3 uid="uid://bn6scene6harbor0"]
+[gd_scene format=3 uid="uid://ff08037rlawx"]
 
 [ext_resource type="PackedScene" uid="uid://cves3n5061ykm" path="res://scenes/level_base.tscn" id="1_base"]
-[ext_resource type="PackedScene" path="res://models/scene6ground.glb" id="2_ground"]
-[ext_resource type="PackedScene" path="res://models/scene6structures.glb" id="3_struct"]
-[ext_resource type="PackedScene" path="res://models/scene6water.glb" id="4_water"]
+[ext_resource type="PackedScene" uid="uid://bhe7gu0loj380" path="res://models/scenes/scene6/scene6ground.glb" id="2_ground"]
+[ext_resource type="PackedScene" uid="uid://deciyserneq1y" path="res://models/scenes/scene6/scene6structures.glb" id="3_struct"]
+[ext_resource type="PackedScene" uid="uid://d3r5wj6xiqree" path="res://models/scenes/scene6/scene6water.glb" id="4_water"]
+[ext_resource type="PackedScene" uid="uid://mg38tlhxtq8p" path="res://models/characters/friend_cat.glb" id="5_eoqld"]
+[ext_resource type="Script" path="res://scripts/characters/friend_cat.gd" id="6_fcat"]
+[ext_resource type="Script" path="res://scripts/flow/scene6_flow.gd" id="7_flow"]
+[ext_resource type="PackedScene" path="res://scenes/npc.tscn" id="8_npc"]
+[ext_resource type="Script" path="res://scripts/interaction/interactable.gd" id="9_inter"]
 
-[node name="World" instance=ExtResource("1_base")]
+[node name="World" unique_id=1000803518 instance=ExtResource("1_base")]
 grid_size = 100
 generate_terrain = false
 map_path = NodePath("Map")
 matte_ground = true
 follow_map_height = true
 grass_on_map_surface = true
+water_path = NodePath("Water")
+buildings_path = NodePath("Structures")
+block_tiles = Array[Vector2i]([Vector2i(57, 71)])
+crate_goal_tile = Vector2i(57, 67)
+grass_blades_per_tier = 2
+grass_chunk_size = 8
 grass_height_zones = true
 cloud_shadows_enabled = true
-buildings_path = NodePath("Structures")
-block_tiles = Array[Vector2i]([])
-ball_tiles = Array[Vector2i]([])
+ball_tiles = Array[Vector2i]([Vector2i(60, 74)])
+spawn_ball_goal = false
+day_night_enabled = true
+day_transition_time = 30.0
+start_faded = true
 
 [node name="Player" parent="." index="3"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 1, 50)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 57, 1, 74)
 max_walk_step = 1.0
 
 [node name="Camera" parent="." index="4"]
 ortho_size = 12.0
 
-[node name="Map" parent="." index="6" instance=ExtResource("2_ground")]
+[node name="Map" parent="." index="6" unique_id=1923688258 instance=ExtResource("2_ground")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
 
-[node name="Structures" parent="." index="7" instance=ExtResource("3_struct")]
+[node name="Structures" parent="." index="7" unique_id=361431044 instance=ExtResource("3_struct")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
 
-[node name="Water" parent="." index="8" instance=ExtResource("4_water")]
+[node name="Water" parent="." index="8" unique_id=227779506 instance=ExtResource("4_water")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
+
+[node name="Water2" parent="." index="9" unique_id=1902336717 instance=ExtResource("4_water")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
+
+[node name="Water3" parent="." index="10" unique_id=495536191 instance=ExtResource("4_water")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49.5, 0, 49.5)
+
+[node name="friend_cat" parent="." index="11" unique_id=1115973333 instance=ExtResource("5_eoqld")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 58, 0, 74)
+script = ExtResource("6_fcat")
+trigger_distance = 2.5
+start_asleep = true
+gated_sleep = true
+
+[node name="James" parent="." instance=ExtResource("8_npc")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 54, 1, 74)
+
+[node name="Talk" type="Node3D" parent="James"]
+script = ExtResource("9_inter")
+speaker = "James"
+lines = PackedStringArray("Morning. You look like you hardly slept.", "There's no doctor for a cat in this town — the harbor's your best hope, if a ship ever comes.")
+
+[node name="Flow" type="Node" parent="."]
+script = ExtResource("7_flow")

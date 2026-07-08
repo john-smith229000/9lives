@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://b8n1pcw0npc31"]
 
-[ext_resource type="Script" path="res://scripts/npc.gd" id="1_npc"]
-[ext_resource type="PackedScene" path="res://models/npc1.glb" id="2_npcmodel"]
+[ext_resource type="Script" path="res://scripts/characters/npc.gd" id="1_npc"]
+[ext_resource type="PackedScene" path="res://models/characters/npc1.glb" id="2_npcmodel"]
 
 [node name="Npc" type="Node3D"]
 script = ExtResource("1_npc")

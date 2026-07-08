@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" path="res://scenes/level_base.tscn" id="1_base"]
 [ext_resource type="PackedScene" uid="uid://c5ggdhh5h3xxq" path="res://scenes/house1.tscn" id="5_house"]
-[ext_resource type="Script" path="res://scripts/house_controller.gd" id="6_hc"]
+[ext_resource type="Script" path="res://scripts/world/house_controller.gd" id="6_hc"]
 
 [node name="World" instance=ExtResource("1_base")]
 height_gradient = 0.0

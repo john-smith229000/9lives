@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://cgameroot1alv"]
 
-[ext_resource type="Script" path="res://scripts/game_root.gd" id="1_root"]
+[ext_resource type="Script" path="res://scripts/flow/game_root.gd" id="1_root"]
 [ext_resource type="PackedScene" path="res://scenes/pause_menu.tscn" id="2_pause"]
 
 [node name="GameRoot" type="Node"]
