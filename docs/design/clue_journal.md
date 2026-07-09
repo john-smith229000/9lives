@@ -44,7 +44,7 @@ days** — it's "only the cat remembers," made mechanical and visible.
 - **Talk:** an `Interactable` gets an optional `grants_clues: Array[StringName]` — awarded on
   conversation close (`on_conversation_closed`). So townsfolk hand you clues by talking.
 - **Observe / examine:** a lightweight `examine` interactable (or the `on_cat_interact`
-  hook) on a prop/spot — the register, the dark tower, a notice board, the tide-line — grants
+  hook) on a prop/spot — the register, the dark lighthouse, a notice board, the tide-line — grants
   a clue when inspected.
 - **Puzzle / task completion:** finishing a job can `Journal.discover(...)`.
 - **Deductions:** formed automatically from combinations (no player action).

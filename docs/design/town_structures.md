@@ -19,7 +19,7 @@ The town is a **bowl around a harbor**. Read from the water inward and upward:
 - **The square** — the inland crossroads: the **storm-struck tree**, a bench, a **harbor
   bell**.
 - **The point** — above it all, on the cliff, the **lighthouse** and its **foot cottage**,
-  reached by the **cliff path**. The dark tower is the town's dominant silhouette, visible
+  reached by the **cliff path**. The dark lighthouse is the town's dominant silhouette, visible
   at the edge of almost every frame.
 - **The edges** — cliff, **tidepools**, a **wooded strip**, and the player's **home cottage**
   tucked at the harbor's edge.
@@ -215,7 +215,7 @@ By Day 9 the same camera that opened on a shut, grey, empty town holds an open, 
 one — with the beam turning over it.
 
 ## 5. Notes for the modeler / level artist
-- Keep the **dark tower in most sightlines** (place it so lanes and the quay frame it).
+- Keep the **dark lighthouse in most sightlines** (place it so lanes and the quay frame it).
 - Author the **broken/mended variants** as swappable meshes/materials keyed to the flags in
   §4 (extends the persistence hooks in `gameplay.md`).
 - Reserve clear **grid lanes** on the quay/wharf/square for the kinetic puzzles (barrels roll

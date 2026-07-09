@@ -24,7 +24,7 @@ Every task, and exactly what it contributes, so nothing reads as busywork. Compa
 | Fish seller (scraps; hands you fish) | Info (rats) + Comfort (fish) | G3 |
 | Grocer | Info (a delivery lost up the tree) | points to Day 3 |
 | Café keeper | Info (the loop-mood; the future clue hub) | — |
-| Retirees / cliff path | Info (lore; the dark tower; keeper glimpsed) | frames G1 |
+| Retirees / cliff path | Info (lore; the dark lighthouse; keeper glimpsed) | frames G1 |
 | Carry fish home | Comfort | G3 |
 - **Flags:** none (memory only).
 - **Tally after D1:** you know *what the town is* and *that a ship exists* — no parts yet.

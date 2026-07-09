@@ -13,7 +13,7 @@ PLACEHOLDER text — rewrite.
 - **Objective (told plainly):** something's wrong with your friend — spend the day finding
   help, helping the town, and piecing together *why the harbour's gone quiet*; come home
   with a fish at dusk and rest.
-- **Shown, not told:** a warm town that *cannot* help; the sea shut; the dark tower; the loop
+- **Shown, not told:** a warm town that *cannot* help; the sea shut; the dark lighthouse; the loop
   (dawn resets what you did — but not what you know).
 - **If stuck (hints):** the current job shows in the hint banner; open the **Journal (J/Tab)**
   to see what you've learned and what still doesn't add up; folk point you onward.
@@ -66,7 +66,7 @@ and the keeper → `[CLUE] keeper_lore`.
 Busy; no fish till evening (his refusal line). Help him — **carry/stack** his crates (or a
 quick sort) — so he sets a fish aside for you this evening. → `[CLUE] tides` (the sea's rhythm).
 
-### G. The cliff path — the dark tower  `[GAME] examine`
+### G. The cliff path — the dark lighthouse  `[GAME] examine`
 **Examine** the unlit tower (a figure at the rail, gone; you can't get up). → `[CLUE]
 beacon_dark`.
 
@@ -108,7 +108,7 @@ Deductions: `cut_off` (gates evening), `help_by_sea` (seeds Day 2). Persist acro
 | D | Café | café owner | `[PUZZLE]` | **search**; `light_lore` |
 | E | Square | retirees | `[GAME]` | **jump**; `keeper_lore` |
 | F | Market | fish seller | `[TASK]` | **carry**; `tides`; fish set aside |
-| G | Cliff | dark tower | `[GAME]` | **examine**; `beacon_dark` |
+| G | Cliff | dark lighthouse | `[GAME]` | **examine**; `beacon_dark` |
 | — | — | — | `[DEDUCE]` | `cut_off` (gates evening), `help_by_sea` |
 | 4–5 | Market→Home | seller, friend | frame | the evening fish |
 | 6–7 | Home | friend | frame | sleep; the loop; Journal persists |

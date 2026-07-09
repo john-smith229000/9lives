@@ -48,7 +48,7 @@ keeper** (revisited for a cure — dead ends); the **keeper** and their **sick p
 
 *→ phase tick: MIDDAY → AFTERNOON.*
 
-## AFTERNOON  *(the gold hour; the climb to the dark tower)*
+## AFTERNOON  *(the gold hour; the climb to the dark lighthouse)*
 6. **The cliff path — the step up.** `[GAME] jump.` A single ledge blocks the way; jump it —
    the verb taught on flat stakes before the real climbs later. The one lit window at the
    tower's foot grows as you near.
@@ -73,7 +73,7 @@ keeper** (revisited for a cure — dead ends); the **keeper** and their **sick p
 
 ## EVENING
 10. **The walk home (opt.).** Convey: two houses in this town keeping a small light for
-    someone they can't fix. You pass the dark tower thinking about lights and the ships that
+    someone they can't fix. You pass the dark lighthouse thinking about lights and the ships that
     used to read them.
 
 ## NIGHT

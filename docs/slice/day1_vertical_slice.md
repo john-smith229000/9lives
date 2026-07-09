@@ -13,7 +13,7 @@ scene setup · **[CONTENT]** authoring.
 ## 0. Scope — what the Day-1 slice is (and isn't)
 
 **In:** wake inside the home beside the sick friend → carry a fish home for them → tour the
-town meeting the folk (order-tolerant) → the dark tower glimpsed → evening → sleep → **wake
+town meeting the folk (order-tolerant) → the dark lighthouse glimpsed → evening → sleep → **wake
 to the same dawn** (the loop lands). ~10–15 min. Proves the *feel*: the loop, the warm-but-
 powerless town, the ache — with the minimum systems.
 
@@ -72,7 +72,7 @@ Replace the greybox flow (ball/crate/placeholder James) with the Day-1 tour:
    `met_dock`, `met_fish`, `met_grocer`, `met_cafe`, opt. `met_retiree`). A **phase ticks**
    at each district seam. Optional: shove the marina worker's crate (`s6_crate` — reuse the
    built crate).
-5. **Cliff path glimpse:** reach it → the dark tower + one lit window + the keeper figure
+5. **Cliff path glimpse:** reach it → the dark lighthouse + one lit window + the keeper figure
    (no conversation). `s6_saw_tower`.
 6. **Evening → home:** hint to head home; walk past the mother's lit window/empty table.
 7. **Sleep:** curl by the friend (`friend.enable_sleep()` → `curled_up`) → `world.end_day()`.
@@ -116,7 +116,7 @@ The town map GLBs exist (`scene6ground/structures/water.glb`); what's missing is
 
 **[WIRE] Navigation:** confirm walkable routes between all of the above; set `confine_to_land`
 / blockers so the cat can't wander off the map; verify the scene-6 mesh supports the tour.
-**Player spawn beside the friend at home.** Keep the **dark tower in most sightlines**.
+**Player spawn beside the friend at home.** Keep the **dark lighthouse in most sightlines**.
 
 ---
 
@@ -198,7 +198,7 @@ camera → free-move).
   `start_faded = true`; the **`Flow`** node (`scene6_flow.gd`).
 - Place all **NPCs + `Talk` Interactables** (§3) and **props** (§6) in their districts (§4).
 - **Home interior** + `HouseController`; **dock office** interior/desk.
-- The **dark tower + keeper figure + lit window**; the **mother's window/table**.
+- The **dark lighthouse + keeper figure + lit window**; the **mother's window/table**.
 - The **fish pickup** at the stall; the **dish** at home.
 - (Optional) the marina worker's **crate** for the push favor.
 
@@ -216,7 +216,7 @@ camera → free-move).
 
 ## 12. Definition of done (playtest)
 A player, no debug keys, does: wake inside beside the friend → take the fish from the stall
-and give it at the dish → meet the town (any order) → glimpse the dark tower → head home in
+and give it at the dish → meet the town (any order) → glimpse the dark lighthouse → head home in
 the evening → curl up → **wake to the same dawn**, with narration noticing what reset. Runs
 ~10–15 min, order-tolerant, no soft-locks, smooth frame rate. It should *feel* like the game.
 

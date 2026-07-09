@@ -19,7 +19,7 @@ Everyone is kind. Nobody can help. That gap is the emotional engine.
 ### You — the orange cat (silent protagonist)
 - **Essence:** the one who *stays*. Observant, tender, far more frightened than the surface
   shows. You don't narrate fear; you narrate the world, and the fear leaks through in what
-  you notice (their breath, the empty chairs, the dark tower).
+  you notice (their breath, the empty chairs, the dark lighthouse).
 - **Voice:** you don't speak. The narration is your interiority — close, plain, present.
   Rule: **it never says "afraid," it shows you counting breaths.**
 - **Want / need:** find help for the friend / to not be powerless. The loop is your terror
@@ -43,22 +43,25 @@ Everyone is kind. Nobody can help. That gap is the emotional engine.
 ## The townsfolk (by role)
 
 ### The marina / wharf worker
-- Steady hands; unhurried, plainspoken, kind without fuss. Keeps the small things ticking.
-- **Voice:** short sentences, understatement; the worse it is, the plainer he says it.
-- **Wound:** watched the town go quiet since the light failed and made a private peace with
-  it that looks like calm and is really a quiet giving-up.
-- **Subtext:** understands "help comes from off the island" better than anyone — he
-  remembers when it did — and under-says it, because hope costs him.
-- **Holds:** the crates/barrels; a jammed slip. **Arc:** the first to let himself hope again.
-- **Detail:** rope-callused, tar-and-salt smell, an unlit pipe he turns over and never fills.
+- A **young man, easygoing to the point of lazy** — sooner naps on a coil of rope than fixes
+  his slip. Not unkind, just unbothered; needs a nudge to do anything.
+- **Voice:** loose, breezy, a shrug in words — "yeah, I'll get to it" (he won't).
+- **Wound / why he's stuck:** apathy more than despair — with the harbour shut there's "no
+  point" hurrying, so he's let things slide (the jammed slip is his, unfixed for weeks).
+- **Holds:** the crates/barrels; the jammed slip. **Arc:** the cat's stubbornness slowly
+  shames — then inspires — him into pitching in.
+- **Detail:** a favourite sun-napping spot, a half-whittled bit of wood, jobs left half-done.
 
 ### The larger-ship dock worker (dock master)
-- All procedure; keeps the harbor register though nothing docks. Clings to the forms.
-- **Voice:** clipped, official, a beat too gentle when it slips.
-- **Wound:** his whole job is waiting for ships that don't come; the ledger is how he copes.
+- An **older man wound tight with stress** — the harbour is his responsibility and it's
+  falling apart on his watch. He buries the panic in procedure; the register is his life-raft.
+- **Voice:** harried, clipped, fraying into snappishness; softens a beat when he forgets to be
+  stressed, then catches himself.
+- **Wound:** waiting for ships that don't come, accountable for a harbour he can't fix.
 - **Subtext / seed:** the register **lists a vessel as due** — the strongest ship-seed,
-  delivered as bureaucracy, his pen hovering over a line he can't fill in.
-- **Holds:** the fouled berth. **Detail:** a huge stamped ledger; the unfilled line.
+  delivered as anxious bureaucracy, his pen hovering over a line he can't fill in.
+- **Holds:** the fouled berth. **Detail:** ink-stained fingers, a stopped clock he keeps
+  checking, the big stamped ledger, the unfilled line.
 
 ### The fish-market seller
 - Brusque, weather-wise, warm under the crust. Reads sky and tide like scripture.
@@ -71,30 +74,39 @@ Everyone is kind. Nobody can help. That gap is the emotional engine.
 - **Holds:** fish; a rat problem. **Detail:** cold red hands, a knife always moving, wraps
   fish in yesterday's paper without looking.
 
-### The café / bookshop keeper
-- Quiet, precise, indirect; speaks in *noticing*. Feels the town's wrongness as sharply as
-  you do.
-- **Voice:** soft, careful, uncanny; states an observation and lets it hang.
+### The café owner  (café / bookshop; the clue-hub)
+- A **warm, sweet lady who adores cats** — dotes on you and slips you **treats and little
+  things to take home to your friend**. She also keeps the town's books, so she's the
+  **clue-hub**: gently observant, she feels the town's held breath more than anyone.
+- **Voice:** kind, a little dreamy, fusses over you — then says something uncannily
+  perceptive and lets it hang.
 - **Wound:** loneliness; two cups poured from habit, one always goes cold.
 - **Subtext / seed:** senses **time itself is off** ("the evenings just close over") —
-  closest to the loop, never quite names it. The clue-hub across days.
-- **Detail:** dust in grey light, a cold second cup, a barometer stuck on CHANGE, a door
-  bell that hasn't rung in days.
+  closest to the loop, never quite names it.
+- **Holds / gives:** treats + small gifts for the friend (comfort items; feeds the friend's
+  "something to look at" ritual and G3 care); lighthouse lore, the clue thread.
+- **Detail:** a saucer set down for you, dust in grey light, a barometer stuck on CHANGE,
+  a door bell that hasn't rung in days.
 
 ### The general-store / grocer
-- Making do with dwindling stock; practical, a little harried, generous anyway.
-- **Voice:** brisk, apologetic about empty shelves.
-- **Wound:** can't restock with the harbor shut; rations what's left.
-- **Holds:** lamp oil, a rat trap — but a delivery's been **storm-stranded** (a ledge / a
-  tree) since the roads and sea both failed. **Detail:** half-empty shelves, an apron of
-  patched pockets.
+- A **gruff, sour man who dislikes cats** — sure you're only here to **steal his food**. He
+  shoos you off, watches you sidelong. Tight-fisted, rationing what little's left.
+- **Voice:** curt, suspicious, grumbling — "shoo," "paws off my shelves."
+- **Wound:** can't restock with the harbour shut; guards his dwindling stock like treasure
+  and takes it out on the nearest stray.
+- **Arc:** when you **catch the rat that's been raiding his store** (a later day), he
+  softens — grudging thanks turns to real warmth; you become the one cat he trusts.
+- **Holds:** lamp oil, a rat trap — and a **storm-stranded delivery**. **Detail:** half-empty
+  shelves guarded like a vault, an apron of patched pockets, a broom he waves at cats.
 
-### The retiree(s)
-- The town's memory and its wry comic relief; remember when the light was lit and the quay
-  ran gold of an evening.
-- **Voice:** fond bickering; misremembered years; softens into real grief for the old town.
-- **Wound / seed:** they've outlived the town's good years and half-believe they won't
-  return. **Holds:** small nuisances (a rat in the shed); shortcuts and lore.
+### The retiree(s)  (a sweet old couple)
+- A **sweet old married couple** who **bicker fondly** over every little thing — the town's
+  memory and its comic relief. They remember when the light was lit and the quay ran gold.
+- **Voice:** overlapping, correcting each other's years and stories; softens into real grief
+  for the old town, then straight back to bickering.
+- **Wound / seed:** they've outlived the town's good years and half-believe they won't return.
+- **Holds:** small nuisances (a rat in the shed; a thing stuck just out of reach); shortcuts
+  and lore.
 
 ### The mother  *(a separate townsperson — the town's "kept hoping" pole)*
 - Not a caretaker of the sick — **ordinary life continuing**, and the one who **never stopped
@@ -126,7 +138,7 @@ The heart of the theme. Deep-dive:
 
 - **Who they were:** the lightkeeper who kept the town tied to the world — every ship that
   ever found the harbour found it by their flame. A steady, proud heart of the place. Shame
-  under the despair now, because they know exactly what the dark tower means.
+  under the despair now, because they know exactly what the dark lighthouse means.
 - **Why they stopped:** their **partner fell ill**, and there is **no one else** — the keeper
   is the sole caretaker, and cannot leave the bedside for the hours (and nights) it takes to
   restore and *tend* the beacon. And after enough dark nights with no ship answering, they

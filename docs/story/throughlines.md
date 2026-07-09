@@ -27,7 +27,7 @@ Corollaries the game keeps proving:
   almost every frame; lighting it changes the whole silhouette.
 - **The two lights** (a bedside lamp the keeper can still bear, the beacon they can't) =
   private care you can manage vs. public hope you can't. Plant Day 1 (one lit window under
-  the dark tower), name Day 2, pay off Day 8 (both burning).
+  the dark lighthouse), name Day 2, pay off Day 8 (both burning).
 - **The frozen day = the frozen heart.** Every loop is the same dawn because you won't let it
   move.
 - **The imperfect loop / the leak = the truth the fear can't hold back.** The friend slips
@@ -75,8 +75,8 @@ Every plant, and where it lands. (Keep the plants quiet; make the payoffs unmist
 | Plant (day) | Payoff (day) |
 |---|---|
 | The **horn's absence** — the sound never heard (D1 audio) | the **horn** cuts the fog (D9) |
-| The **dark tower** in every frame (D1+) | the **beam** sweeps (D8/9) |
-| **One lit window** under the dark tower (D1 glimpse) | the **two lights** named (D2), both lit (D8) |
+| The **dark lighthouse** in every frame (D1+) | the **beam** sweeps (D8/9) |
+| **One lit window** under the dark lighthouse (D1 glimpse) | the **two lights** named (D2), both lit (D8) |
 | **Boats ready in cradles**, nowhere to sail (D1 marina) | the sea open; a hull could sail (D9) |
 | The café's **two cups**, one always cold (D1) | the second chair filled as the town returns (D8/9) |
 | The dock **register's unfilled line** (D1/3) | a docked ship's name written in it (D9) |

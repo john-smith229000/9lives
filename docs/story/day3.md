@@ -68,7 +68,7 @@ vet clue + first uncanny beat). The **keeper** referenced, not visited.
 *→ phase tick: AFTERNOON → EVENING.*
 
 ## EVENING
-10. **The walk home (opt. quiet).** Hold on the dark tower with new meaning — it's not just
+10. **The walk home (opt. quiet).** Hold on the dark lighthouse with new meaning — it's not just
     sad now, it's *the answer, unlit*. A hopeful heaviness. Head home.
 
 ## NIGHT
@@ -95,7 +95,7 @@ vet clue + first uncanny beat). The **keeper** referenced, not visited.
 | 7 | Café | café keeper | yes | **the vet** (learned_vet) |
 | 8 | Café | café keeper | opt. | first uncanny loop beat |
 | 9 | — | — | yes | objective clicks toward final shape |
-| 10 | Walk | — | opt. | the dark tower reframed as "the answer" |
+| 10 | Walk | — | opt. | the dark lighthouse reframed as "the answer" |
 | 11–12 | Home | friend | yes | sleep; loop to Day 4 |
 
 Spine: recover the lens (tree) and the delivery (rocks), collect oil + trap from the grocer,

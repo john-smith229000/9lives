@@ -159,7 +159,7 @@ persistence). Knowledge always carries; listed fixes carry via flags; daily ritu
 to the friend) and NPC/prop positions reset.
 
 - **Day 1 — the normal day.** Establish; meet the town by role; first fish-to-friend ritual;
-  notice the rat, the dark tower, the stranded things. *Persists: memory only.* Ends: sleep
+  notice the rat, the dark lighthouse, the stranded things. *Persists: memory only.* Ends: sleep
   → wake to the same dawn (the loop lands).
 - **Day 2 — searching.** Help the marina hand (jammed slip) → **crates freed** (persists).
   Glimpse/meet the keeper and their sick loved one. Bring fish again.
@@ -205,7 +205,7 @@ Same gentle town-tour shape as before, re-cast:
   of fish on you for the friend).
 - **Afternoon:** the **grocer** (dwindling stock; a delivery lost since the storm — points at
   the tree without you acting yet); the **café/bookshop keeper** ("the evenings just close
-  over" — the loop seed); the **cliff path** — the dark tower, the keeper a distant shape at
+  over" — the loop seed); the **cliff path** — the dark lighthouse, the keeper a distant shape at
   the rail, the way up blocked.
 - **Evening:** a quiet beat (the friend's favourite spot); the ache of a warm town that
   can't help. Home.
@@ -214,7 +214,7 @@ Same gentle town-tour shape as before, re-cast:
   again). *You have been here already.*
 
 Nothing on Day 1 persists but memory. The obstacles above are only *noticed* today — the
-stuck delivery, the rat, the dark tower, the blocked path — so Days 2+ have somewhere to go.
+stuck delivery, the rat, the dark lighthouse, the blocked path — so Days 2+ have somewhere to go.
 
 ## Open decisions (unchanged, now cleaner)
 

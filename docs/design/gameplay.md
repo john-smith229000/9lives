@@ -45,7 +45,7 @@ the story woven on top (one line per task). Nameless roles throughout. Cross-ref
 8. **Heavy object** — a sunk skiff / debris that needs a **lever + crates** (multi-tile,
    multi-step) rather than a single push. For the berth.
 9. **Persistent-repair visual swap** — broken↔fixed mesh keyed to a flag (jammed slip →
-   clear, gap → plank bridge, dark tower → lit), so the town visibly heals.
+   clear, gap → plank bridge, dark lighthouse → lit), so the town visibly heals.
 
 ## Reusable puzzle templates
 
@@ -88,7 +88,7 @@ Format: **tasks** (gameplay) → *story weave*. New mechanic in **bold**.
 - **Push tutorial:** shove the marina hand's loose crate onto its spot (one easy push).
 - **Carry & deliver tutorial:** take a wrapped fish from the fish seller **(carry)** home,
   **give** it to the friend (they eat it — today).
-- **Notice, don't solve:** the dark tower (blocked path), a delivery stuck high, a rat at
+- **Notice, don't solve:** the dark lighthouse (blocked path), a delivery stuck high, a rat at
   the market. Return home → sleep → wake to the same dawn.
 - *Weave: a warm town that can't help; the loop lands via small things reset at dawn.*
 - Persists: memory only.

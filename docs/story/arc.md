@@ -59,6 +59,20 @@ behaviour and dialogue — never a health bar:
 
 The trick is to run all seven in parallel so a "puzzle day" is always also a character day.
 
+## Townsfolk relationship hooks (Day-1 personalities → payoffs)
+Each townsperson's Day-1 attitude (see `cast.md`) turns over the loop:
+- **Grocer** — hostile and cat-hating on Day 1 (sure you're a thief). When you **catch the
+  rat raiding his store (Day 4–5)** he flips to grudging, then genuine, warmth — the one cat
+  he trusts. His cold open makes the turn land; and it's *why* the oil/trap access loosens.
+- **Café owner** — a sweet cat-lover from the start; a **recurring source of comfort gifts**
+  (treats and little things for the friend), so she quietly feeds G3 (the friend's care and
+  the "something to look at" ritual) across the whole run.
+- **Marina worker** — lazy on Day 1; your persistence **shames then inspires** him, so his
+  slip/bridge help feels earned by the mid-game.
+- **Dock master** — wound tight with stress; his knots **loosen as the harbour mends**
+  (cleared berth, a fillable register line) — a visible barometer of the town's recovery.
+- **Retirees** — the "kept hoping" bickering couple; memory + comic relief throughout.
+
 ## Loop-awareness — a quiet escalating thread
 
 Keep it understated; never explain the why.
